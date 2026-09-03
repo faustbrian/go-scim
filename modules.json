@@ -1,0 +1,137 @@
+{
+  "schema_version": 2,
+  "repository": "github.com/faustbrian/go-scim",
+  "go_version": "1.26.6",
+  "modules": [
+    {
+      "directory": ".",
+      "module_path": "github.com/faustbrian/go-scim",
+      "go_version": "1.26.6",
+      "packages": [
+        {
+          "module_directory": ".",
+          "directory": ".",
+          "name": "planned",
+          "import_path": "github.com/faustbrian/go-scim",
+          "kind": "planned entry point",
+          "production": false,
+          "executable": false,
+          "coverage_required": false,
+          "build_required": false,
+          "build_tags": []
+        }
+      ],
+      "purpose": "Planned SCIM 2.0 protocol boundary for discovery, Users and Groups, search, filtering, sorting, pagination, PATCH, Bulk, ETags, typed errors, and organization/provider-owned connection lifecycle; no runtime package is implemented or released.",
+      "lifecycle": "planned",
+      "kind": "public library",
+      "releasable": true,
+      "family": "protocols-and-descriptions",
+      "family_label": "Protocols And Descriptions",
+      "family_description": "Standards, envelopes, schemas, descriptions, signatures, and wire interoperability.",
+      "family_order": 3,
+      "version": "",
+      "tag_prefix": "v",
+      "owned_dependencies": [],
+      "reverse_owned_dependencies": [],
+      "external_runtime_dependencies": [],
+      "required_services": [],
+      "build_tags": [],
+      "test_tags": [],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [
+        "docs/goal.md"
+      ],
+      "goal_status": "planned",
+      "goal_evidence": [],
+      "cohesion": {
+        "family": "protocols-and-descriptions",
+        "secondary_capabilities": [
+          "data-encoding",
+          "http-and-service-edge",
+          "identity-and-access"
+        ],
+        "responsibility": "Plan SCIM 2.0 discovery, Users and Groups, search, filtering, sorting, pagination, PATCH, Bulk, ETags, typed protocol errors, and organization/provider-owned connection lifecycle.",
+        "non_goals": [
+          "Claim that a public package identifier, runtime API, implementation, compatibility promise, protocol conformance, or release currently exists.",
+          "Own organization-specific mapping, persistence adapters, single sign-on, personal or otherwise unowned SCIM connections, outbound vendor-directory connectors, or administration interfaces.",
+          "Own database clients, migrations, transactions, caches, background workers, or caller application policy."
+        ],
+        "public_package_identifier": "none",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-scim"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-scim": "Planning identity only; no importable package or runtime API currently exists."
+        },
+        "lifecycle_status": "planned",
+        "maturity": "experimental",
+        "construction_styles": [
+          "new-config",
+          "plain-function",
+          "validated-value"
+        ],
+        "lifecycle_styles": [
+          "stateless"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "copy"
+          ],
+          "runtime_resources": "caller",
+          "background_work": "none"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [],
+        "companions": [],
+        "supported_go": {
+          "minimum": "1.26.6",
+          "tested": [
+            "1.26.6"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [],
+        "supported_protocols": [],
+        "documentation": {
+          "readme": "README.md",
+          "api": null,
+          "adoption": null,
+          "security": null,
+          "compatibility": null,
+          "performance": null,
+          "examples": null,
+          "faq": null,
+          "changelog": null,
+          "pkg_go_dev": null,
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "not-started",
+          "hardening": "not-started",
+          "release": "not-started"
+        }
+      },
+      "gates": {
+        "api_compatibility": false,
+        "benchmarks": false,
+        "conformance": false,
+        "coverage": false,
+        "documentation": true,
+        "fuzz": false,
+        "interoperability": false,
+        "lint": false,
+        "mutation": false,
+        "race": false,
+        "security": false,
+        "tests": false
+      }
+    }
+  ]
+}
