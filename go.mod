@@ -1,3 +1,3 @@
 module github.com/faustbrian/go-scim
 
-go 1.26.6
+go 1.27.0
