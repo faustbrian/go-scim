@@ -15,9 +15,11 @@ That record contains proposed contracts; it is not implementation evidence.
 ## Current planning acceptance
 
 - Keep this repository visibly planned and absent from installable consumer
-  catalogs.
+  catalogs, with `releasable: false` and release delivery blocked.
 - Record the frozen Protocols and Descriptions family, secondary capabilities,
   ownership, and delivery lifecycle in schema-v2 engineering metadata.
+- Maintain a versioned SCIM threat model and private vulnerability reporting
+  process without representing planned controls as implemented safeguards.
 - Validate the metadata locally and in hosted CI with immutable,
   checksum-verified `go-library-tools` v1.4.0 tooling.
 - Do not claim a public package identifier, installation path, runtime API,
@@ -28,4 +30,6 @@ That record contains proposed contracts; it is not implementation evidence.
 Source packages, nested modules, dependencies, API contracts, RFC 7643 and RFC
 7644 behavior, hardening evidence, compatibility commitments, tags, and
 releases remain outside this planning-only goal. They require separately
-authorized work and their own executable acceptance evidence.
+authorized work and their own executable acceptance evidence. Before a release,
+the proposed trust boundaries need implemented controls, focused hostile-input
+and lifecycle evidence, security gate results, and a per-module verdict.

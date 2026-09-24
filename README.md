@@ -33,7 +33,9 @@ Their presence in planning material does not make them available here.
 
 Implementation, hardening, and release have not started. The current module
 declaration exists only so repository tooling can validate the planned
-identity, family, ownership, and lifecycle metadata.
+identity, family, ownership, and lifecycle metadata. It is explicitly
+non-releasable; release remains blocked until implementation and security
+evidence exist.
 
 The plan requires caller-owned configuration and runtime resources, copied
 mutable inputs, context-bounded external operations, and no package-owned
@@ -47,6 +49,10 @@ and schema-v2 engineering inventory. Planned lifecycle state excludes this
 module from installable and released consumer catalogs. The local
 `make cohesion` target validates that boundary with the exact checksum-pinned
 `go-library-tools` v1.4.0 release declared in `.golib.yaml`.
+
+[Security planning](docs/security.md) identifies the intended trust boundaries
+and release prerequisites. Report suspected vulnerabilities through the
+[private reporting process](SECURITY.md), not a public issue.
 
 Passing repository checks proves only that the planning scaffold and metadata
 are internally consistent. It does not prove any SCIM behavior or API.
