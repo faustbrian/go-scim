@@ -57,6 +57,15 @@ and release prerequisites. Report suspected vulnerabilities through the
 Passing repository checks proves only that the planning scaffold and metadata
 are internally consistent. It does not prove any SCIM behavior or API.
 
+The prepared `make fast-check GOLIB=/path/to/golib` entry point checks
+configuration, repository structure, cohesion, offline specification decisions,
+local documentation links and secrets. It does not run application tests or
+online documentation campaigns. This entry point requires a verifier supporting
+`golib docs check --local` and `golib secrets check`; the currently declared
+v1.4.0 verifier does not support it. CI and `make ci` retain their existing
+contract until a capable published verifier is qualified and adopted. Do not
+treat the prepared command as the current required CI route.
+
 See the versioned [Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
 and [package-family guidance](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/design-language.md#package-families-and-selection)
 for the shared design language.
