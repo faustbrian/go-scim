@@ -12,8 +12,8 @@ permissions:
   contents: read
 
 jobs:
-  planning-contract:
-    name: Planning contract
+  required:
+    name: Required
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -35,15 +35,3 @@ jobs:
       - run: golib cohesion check
       - run: golib specification check --online
       - run: golib check --all
-
-  required:
-    name: Required
-    if: always()
-    needs: planning-contract
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Require planning contract
-        env:
-          PLANNING_RESULT: ${{ needs.planning-contract.result }}
-        run: test "${PLANNING_RESULT}" = success
