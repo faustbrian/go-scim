@@ -75,6 +75,8 @@ campaigns or release checks. Hosted Required applies the same structural checks
 and scans committed changed content against the exact validated PR base or push
 before commit, without a fallback base or a duplicate full-history scan.
 Missing or invalid change identities and failed checks remain failures.
+The changed-content scanner has a fatal 75-second deadline and five-second
+termination grace, allowing bounded cold compilation without skipping scans.
 
 `make check-full` optionally preserves the previous full manifest-selected
 contract, including broad spelling and external-link documentation assurance.
