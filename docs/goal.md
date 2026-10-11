@@ -21,7 +21,9 @@ That record contains proposed contracts; it is not implementation evidence.
 - Maintain a versioned SCIM threat model and private vulnerability reporting
   process without representing planned controls as implemented safeguards.
 - Validate the metadata locally and in hosted CI with immutable,
-  checksum-verified `go-library-tools` v1.4.0 tooling.
+  checksum-verified public `go-library-tools` v2.1.2 tooling, without building
+  it from source. Keep ordinary structure, specification and links offline,
+  with unconditional secret checks and explicit online authority refresh.
 - Do not claim a public package identifier, installation path, runtime API,
   compatibility promise, protocol conformance, or released behavior.
 
