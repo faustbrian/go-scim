@@ -1,5 +1,7 @@
 # SCIM threat model
 
+[Documentation index](../README.md) · [Repository entry](../../README.md)
+
 Version: 1 (planning baseline, 2026-09-24)
 Status: proposed; no runtime control is implemented or verified here.
 Owner: go-scim maintainers. Review before the first implementation or release,
@@ -55,3 +57,6 @@ security scans, review of data exposure surfaces, and an explicit per-module
 verdict. Any future accepted risk must record its owner, rationale, mitigation,
 evidence, and review condition; critical and high findings cannot receive a
 passing release verdict.
+
+Choose the next guide in the [documentation index](../README.md)
+or return to the [repository entry](../../README.md) for installation and ownership.

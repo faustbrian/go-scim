@@ -1,5 +1,7 @@
 # Security planning
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 `go-scim` has no runtime implementation, importable package, or release.
 The [threat model](security/threat-model.md) is version 1 of the proposed
 security boundary; its controls are requirements for future implementation,
@@ -13,3 +15,6 @@ tests, along with selected security checks and a per-module release verdict.
 The threat model and risk decisions must be revised when the API, integration,
 or trust boundary changes. Planning metadata and structural checks alone do
 not satisfy those gates.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

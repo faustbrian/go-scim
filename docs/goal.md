@@ -1,5 +1,7 @@
 # Goal: planned go-scim boundary
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 Status: planned
 
 The coordination plan identifies `github.com/faustbrian/go-scim` as the future
@@ -35,3 +37,6 @@ releases remain outside this planning-only goal. They require separately
 authorized work and their own executable acceptance evidence. Before a release,
 the proposed trust boundaries need implemented controls, focused hostile-input
 and lifecycle evidence, security gate results, and a per-module verdict.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.
