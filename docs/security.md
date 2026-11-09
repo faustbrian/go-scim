@@ -1,5 +1,7 @@
 # Security boundaries
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 The unreleased Users protocol profile has bounded decoding, schema validation,
 fail-closed credential-to-connection/authorization seams, typed redacted errors,
 ETag/CAS intent and an explicit atomic store contract. These are protocol controls,
@@ -14,3 +16,6 @@ audit, native organization mapping, connection lifecycle or HTTP ingress control
 Release remains blocked by parent-owned metadata and qualification. Independent
 review, interoperability, concrete adapters, selected security checks and a
 per-module verdict are still required before a release or full-unit claim.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

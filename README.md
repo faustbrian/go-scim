@@ -103,6 +103,52 @@ scope remains 67 units, and this profile alone does not close M28.
 and qualification boundaries. Parent-owned inventory and release state are not
 changed by this implementation.
 
+## Verification
+
+Use the checksum-verified public `golib` v2.5.1 release declared in
+`.golib.yaml`, with Go 1.27.2 as the verification producer. The module's
+minimum remains Go 1.27.0; this profile is not a verified release.
+An ordinary standalone checkout is sufficient, without sibling repositories,
+goal ledgers or building Tools from source:
+
+```sh
+make check
+make ci
+```
+
+Both routes, and the `make fast-check` alias, check configuration, repository
+structure, cohesion, offline specification decisions, local documentation links
+and unconditional whole-tree secrets. They run no application tests, mutation
+campaigns or release checks. Hosted Required applies the same structural checks
+and scans committed changed content against the exact validated PR base or push
+before commit, without a fallback base or a duplicate full-history scan.
+Missing or invalid change identities and failed checks remain failures.
+The changed-content scanner has a fatal 75-second deadline and five-second
+termination grace, allowing bounded cold compilation without skipping scans.
+
+`make check-full` optionally preserves the previous full manifest-selected
+contract, including broad spelling and external-link documentation assurance.
+It is not an ordinary CI prerequisite and does not establish runtime or release
+qualification for this module.
+
+`make check-online` explicitly adds authoritative specification refresh to the
+local contract. Scheduled and manual CI also refresh those authorities online
+and run whole-tree secrets. Passing any of these planning routes is not runtime
+security or release qualification.
+
+See the versioned [Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
+and [package-family guidance](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/design-language.md#package-families-and-selection)
+for the shared design language.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Documentation navigation
+
+[Complete documentation map](docs/README.md#complete-documentation-map)
+
+Use the [versioned ecosystem entry](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md) for package
+selection. The [frozen compatibility cohort](https://github.com/faustbrian/go-library-tools/blob/v1.8.4/docs/ecosystem/compatibility-sets.md)
+is separate from current package releases and unpublished source changes.
+Adopting them does not silently update that cohort.

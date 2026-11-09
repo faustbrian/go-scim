@@ -1,5 +1,7 @@
 # Goal: SCIM Users protocol-service profile
 
+[Documentation index](README.md) · [Repository entry](../README.md)
+
 The current implementation assignment supersedes the earlier planning-only
 exclusion of source/runtime APIs for one finite, storage-neutral Users profile.
 It does not make the module released, fully verified, durably provisioned or
@@ -40,3 +42,6 @@ independent final review, integration and Git delivery are parent-owned. Existin
 planning/release metadata is not changed here. Runtime source, passing protocol
 tests or a future registration change must not be described as whole-unit
 verification, installable released behavior or durable consumer provisioning.
+
+Choose the next guide in the [documentation index](README.md)
+or return to the [repository entry](../README.md) for installation and ownership.

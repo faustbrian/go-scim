@@ -1,5 +1,7 @@
 # SCIM threat model
 
+[Documentation index](../README.md) · [Repository entry](../../README.md)
+
 Version: 2 (Users protocol boundary, 2026-11-02)
 Status: unreleased Users protocol implementation; native authority, persistence,
 transport and full-unit qualification remain unverified.
@@ -72,3 +74,6 @@ security scans, review of data exposure surfaces, and an explicit per-module
 verdict. Any future accepted risk must record its owner, rationale, mitigation,
 evidence, and review condition; critical and high findings cannot receive a
 passing release verdict.
+
+Choose the next guide in the [documentation index](../README.md)
+or return to the [repository entry](../../README.md) for installation and ownership.
