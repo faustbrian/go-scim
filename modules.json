@@ -11,27 +11,31 @@
         {
           "module_directory": ".",
           "directory": ".",
-          "name": "planned",
+          "name": "scim",
           "import_path": "github.com/faustbrian/go-scim",
-          "kind": "planned entry point",
-          "production": false,
-          "executable": false,
-          "coverage_required": false,
-          "build_required": false,
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
           "build_tags": []
         }
       ],
-      "purpose": "Planned SCIM 2.0 protocol boundary for discovery, Users and Groups, search, filtering, sorting, pagination, PATCH, Bulk, ETags, typed errors, and organization/provider-owned connection lifecycle; no runtime package is implemented or released.",
-      "lifecycle": "planned",
+      "purpose": "Experimental storage-neutral SCIM Users protocol, discovery, schema-aware queries and atomic PATCH intent; native provisioning and complete SCIM qualification remain unfinished.",
+      "lifecycle": "experimental",
       "kind": "public library",
-      "releasable": false,
+      "releasable": true,
       "family": "protocols-and-descriptions",
       "family_label": "Protocols And Descriptions",
       "family_description": "Standards, envelopes, schemas, descriptions, signatures, and wire interoperability.",
       "family_order": 3,
-      "version": "",
+      "version": "0.0.0",
       "tag_prefix": "v",
-      "owned_dependencies": [],
+      "owned_dependencies": [
+        "github.com/faustbrian/go-authentication/v2",
+        "github.com/faustbrian/go-identity",
+        "github.com/faustbrian/go-organization"
+      ],
       "reverse_owned_dependencies": [],
       "external_runtime_dependencies": [],
       "required_services": [],
@@ -44,7 +48,7 @@
       "goal_files": [
         "docs/goal.md"
       ],
-      "goal_status": "planned",
+      "goal_status": "in-progress",
       "goal_evidence": [],
       "cohesion": {
         "family": "protocols-and-descriptions",
@@ -53,20 +57,20 @@
           "http-and-service-edge",
           "identity-and-access"
         ],
-        "responsibility": "Plan SCIM 2.0 discovery, Users and Groups, search, filtering, sorting, pagination, PATCH, Bulk, ETags, typed protocol errors, and organization/provider-owned connection lifecycle.",
+        "responsibility": "Own the selected storage-neutral SCIM Users protocol, schema semantics, discovery, bounded queries, PATCH intent and typed errors.",
         "non_goals": [
-          "Claim that a public package identifier, runtime API, implementation, compatibility promise, protocol conformance, or release currently exists.",
+          "Claim native provisioning, complete SCIM conformance, Groups, Bulk or release qualification from the selected Users protocol profile.",
           "Own organization-specific mapping, persistence adapters, single sign-on, personal or otherwise unowned SCIM connections, outbound vendor-directory connectors, or administration interfaces.",
           "Own database clients, migrations, transactions, caches, background workers, or caller application policy."
         ],
-        "public_package_identifier": "none",
+        "public_package_identifier": "scim",
         "primary_entry_packages": [
           "github.com/faustbrian/go-scim"
         ],
         "package_selection": {
-          "github.com/faustbrian/go-scim": "Planning identity only; no importable package or runtime API currently exists."
+          "github.com/faustbrian/go-scim": "Authenticated and authorized Users protocol operations over explicit authority, mapper and Store contracts; no native adapter."
         },
-        "lifecycle_status": "planned",
+        "lifecycle_status": "active",
         "maturity": "experimental",
         "construction_styles": [
           "new-config",
@@ -79,6 +83,7 @@
         "ownership": {
           "configuration": "caller",
           "mutable_inputs": [
+            "borrow",
             "copy"
           ],
           "runtime_resources": "caller",
@@ -90,31 +95,33 @@
         "supported_go": {
           "minimum": "1.27.0",
           "tested": [
-            "1.27.0"
+            "1.27.2", "1.27.3"
           ]
         },
         "supported_platforms": [
           "portable-go"
         ],
         "supported_backends": [],
-        "supported_protocols": [],
+        "supported_protocols": [
+          "scim-users"
+        ],
         "documentation": {
           "readme": "README.md",
-          "api": null,
-          "adoption": null,
+          "api": "README.md",
+          "adoption": "docs/users-profile.md",
           "security": "docs/security.md",
           "compatibility": null,
           "performance": null,
-          "examples": null,
+          "examples": "README.md",
           "faq": null,
-          "changelog": null,
-          "pkg_go_dev": null,
+          "changelog": "CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-scim",
           "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"
         },
         "known_good_compatibility_sets": [],
         "delivery": {
-          "implementation": "not-started",
-          "hardening": "not-started",
+          "implementation": "in-progress",
+          "hardening": "in-progress",
           "release": "blocked"
         }
       },
@@ -124,13 +131,13 @@
         "conformance": false,
         "coverage": false,
         "documentation": true,
-        "fuzz": false,
+        "fuzz": true,
         "interoperability": false,
-        "lint": false,
+        "lint": true,
         "mutation": false,
-        "race": false,
-        "security": false,
-        "tests": false
+        "race": true,
+        "security": true,
+        "tests": true
       }
     }
   ]

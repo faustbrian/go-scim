@@ -81,6 +81,8 @@ jobs:
         run: golib specification check
       - name: Validate local documentation links
         run: golib docs check --local
+      - name: Verify Users protocol behavior
+        run: make runtime-check
       - name: Scan secrets unconditionally
         env:
           EVENT_NAME: ${{ github.event_name }}

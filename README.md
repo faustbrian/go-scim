@@ -114,12 +114,15 @@ goal ledgers or building Tools from source:
 ```sh
 make check
 make ci
+make runtime-check
 ```
 
 Both routes, and the `make fast-check` alias, check configuration, repository
 structure, cohesion, offline specification decisions, local documentation links
-and unconditional whole-tree secrets. They run no application tests, mutation
-campaigns or release checks. Hosted Required applies the same structural checks
+and unconditional whole-tree secrets. The first two routes run no application
+tests, mutation campaigns or release checks. `runtime-check` runs the Users
+protocol tests with the race detector and Go vet; hosted Required runs that same
+target as well. Hosted Required applies the same structural checks
 and scans committed changed content against the exact validated PR base or push
 before commit, without a fallback base or a duplicate full-history scan.
 Missing or invalid change identities and failed checks remain failures.

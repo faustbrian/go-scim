@@ -5,13 +5,13 @@
     {
       "module_directory": ".",
       "directory": ".",
-      "name": "planned",
+      "name": "scim",
       "import_path": "github.com/faustbrian/go-scim",
-      "kind": "planned entry point",
-      "production": false,
-      "executable": false,
-      "coverage_required": false,
-      "build_required": false,
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
       "build_tags": []
     }
   ]
