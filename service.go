@@ -18,7 +18,14 @@ import (
 // credentials, authorizes the derived connection, then uses only that scope.
 // Every dependency receives a bounded context. Errors expose no partial resource
 // or provider diagnostic. A failed/uncertain mutation is never called success.
-func (s *UsersService) Execute(parent context.Context, r Request) (out Response, err error) {
+func (s *UsersService) Execute(parent context.Context, r Request) (Response, error) {
+	if s == nil {
+		return Response{}, failure(503, "")
+	}
+	return s.service.execute(parent, r)
+}
+
+func (s *protocolService) execute(parent context.Context, r Request) (out Response, err error) {
 	defer func() {
 		if recover() != nil {
 			out = Response{}
@@ -118,9 +125,12 @@ func (s *UsersService) Execute(parent context.Context, r Request) (out Response,
 			return Response{}, e
 		}
 		out = Response{Status: 200, ContentType: "application/scim+json", Body: b}
-	case UserList, UserSearch, Search:
+	case s.profile.list, s.profile.search, Search:
+		if r.Operation == Search && s.profile.schema.ID != userSchema {
+			return Response{}, failure(501, "")
+		}
 		q := r.Query
-		if r.Operation != UserList {
+		if r.Operation != s.profile.list {
 			if doc == nil {
 				return Response{}, failure(400, "invalidSyntax")
 			}
@@ -134,7 +144,7 @@ func (s *UsersService) Execute(parent context.Context, r Request) (out Response,
 			return Response{}, e
 		}
 		out, err = s.list(ctx, c, p)
-	case UserGet:
+	case s.profile.get:
 		if !safeID(r.ResourceID) {
 			return Response{}, failure(404, "")
 		}
@@ -146,7 +156,7 @@ func (s *UsersService) Execute(parent context.Context, r Request) (out Response,
 		if e != nil {
 			return Response{}, e
 		}
-		resource, e := s.config.Store.Get(readCtx, c.Scope, r.ResourceID)
+		resource, e := s.getResource(readCtx, c.Scope, r.ResourceID)
 		readCancel()
 		if e != nil {
 			return Response{}, storeError(e)
@@ -155,7 +165,7 @@ func (s *UsersService) Execute(parent context.Context, r Request) (out Response,
 			return Response{}, failure(503, "")
 		}
 		out, err = s.resourceResponse(resource, 200, p)
-	case UserCreate, UserReplace, UserPatch, UserDelete:
+	case s.profile.create, s.profile.replace, s.profile.patch, s.profile.delete:
 		out, err = s.write(ctx, c, r, doc)
 	default:
 		return Response{}, failure(501, "")
@@ -197,13 +207,13 @@ func authorityExpiry(c Connection) time.Time {
 	return c.AuthorityValidUntil
 }
 
-func (s *UsersService) authorityCurrent(ctx context.Context, c Connection) bool {
+func (s *protocolService) authorityCurrent(ctx context.Context, c Connection) bool {
 	return ctx.Err() == nil && validConnection(c, s.config.Now())
 }
 
 // A new child context consumes the ORIGINAL remaining budget; it never creates
 // a new authority observation. Parent cancellation/deadlines remain controlling.
-func (s *UsersService) authorityContext(ctx context.Context, c Connection) (context.Context, context.CancelFunc, error) {
+func (s *protocolService) authorityContext(ctx context.Context, c Connection) (context.Context, context.CancelFunc, error) {
 	now := s.config.Now()
 	if ctx.Err() != nil || !validConnection(c, now) {
 		return nil, nil, failure(503, "")
@@ -226,11 +236,13 @@ func storeError(e error) error {
 		return failure(412, "")
 	case errors.Is(e, ErrUniqueness):
 		return failure(409, "uniqueness")
+	case errors.Is(e, ErrInvalidGroupMember):
+		return failure(400, "invalidValue")
 	default:
 		return failure(503, "")
 	}
 }
-func (s *UsersService) canonicalResource(r Resource) (Resource, error) {
+func (s *protocolService) canonicalResource(r Resource) (Resource, error) {
 	if !safeID(r.ID) || !validVersion(r.Version) || r.CreatedAt.IsZero() || r.LastModified.Before(r.CreatedAt) || len(r.Schemas) == 0 || len(r.Schemas) > len(s.config.Extensions)+1 {
 		return Resource{}, failure(503, "")
 	}
@@ -241,7 +253,7 @@ func (s *UsersService) canonicalResource(r Resource) (Resource, error) {
 	// Store projections may contain declared read-only attributes, but never
 	// credentials. Validate those with their original type/returned descriptors.
 	for key, value := range r.Attributes {
-		if schema, ok := s.schema(key); ok && schema.ID != userSchema {
+		if schema, ok := s.schema(key); ok && schema.ID != s.profile.schema.ID {
 			obj, ok := value.(map[string]any)
 			if !ok {
 				return Resource{}, failure(503, "")
@@ -253,7 +265,7 @@ func (s *UsersService) canonicalResource(r Resource) (Resource, error) {
 			canonical[schema.ID] = normalized
 			continue
 		}
-		a, ok := findAttribute(coreAttributes(), key)
+		a, ok := findAttribute(s.profile.schema.Attributes, key)
 		if !ok {
 			return Resource{}, failure(503, "")
 		}
@@ -266,6 +278,15 @@ func (s *UsersService) canonicalResource(r Resource) (Resource, error) {
 		}
 	}
 	r.Attributes = canonical
+	if s.profile.schema.ID == groupSchema {
+		members, err := s.normalizeGroupMembers(r.Attributes["members"], nil)
+		if err != nil {
+			return Resource{}, failure(503, "")
+		}
+		if members != nil {
+			r.Attributes["members"] = members
+		}
+	}
 	declared := map[string]bool{}
 	for _, id := range r.Schemas {
 		if _, ok := s.schema(id); !ok || declared[id] {
@@ -273,30 +294,30 @@ func (s *UsersService) canonicalResource(r Resource) (Resource, error) {
 		}
 		declared[id] = true
 	}
-	if !declared[userSchema] {
+	if !declared[s.profile.schema.ID] {
 		return Resource{}, failure(503, "")
 	}
-	for _, a := range coreAttributes() {
+	for _, a := range s.profile.schema.Attributes {
 		if a.Required && !present(r.Attributes[a.Name]) {
 			return Resource{}, failure(503, "")
 		}
 	}
 	for key := range r.Attributes {
-		if schema, ok := s.schema(key); ok && schema.ID != userSchema && !declared[key] {
+		if schema, ok := s.schema(key); ok && schema.ID != s.profile.schema.ID && !declared[key] {
 			return Resource{}, failure(503, "")
 		}
 	}
 	return r, nil
 }
 
-func (s *UsersService) resourceDocument(r Resource) (map[string]any, error) {
+func (s *protocolService) resourceDocument(r Resource) (map[string]any, error) {
 	r, e := s.canonicalResource(r)
 	if e != nil {
 		return nil, e
 	}
 	doc := writableDoc(WritableResource{Schemas: r.Schemas, ExternalID: r.ExternalID, Attributes: r.Attributes})
 	doc["id"] = r.ID
-	doc["meta"] = map[string]any{"resourceType": "User", "created": r.CreatedAt.UTC().Format(time.RFC3339Nano), "lastModified": r.LastModified.UTC().Format(time.RFC3339Nano), "version": string(r.Version), "location": s.location(r.ID)}
+	doc["meta"] = map[string]any{"resourceType": s.profile.schema.Name, "created": r.CreatedAt.UTC().Format(time.RFC3339Nano), "lastModified": r.LastModified.UTC().Format(time.RFC3339Nano), "version": string(r.Version), "location": s.location(r.ID)}
 	if _, e := s.encodeResource(doc); e != nil {
 		return nil, e
 	}
@@ -312,10 +333,10 @@ func readableAttrs(attrs []Attribute) []Attribute {
 	}
 	return out
 }
-func (s *UsersService) location(id string) string {
-	return s.config.BaseURL + "/Users/" + url.PathEscape(id)
+func (s *protocolService) location(id string) string {
+	return s.config.BaseURL + s.profile.endpoint + "/" + url.PathEscape(id)
 }
-func (s *UsersService) resourceResponse(r Resource, status int, p queryPlan) (Response, error) {
+func (s *protocolService) resourceResponse(r Resource, status int, p queryPlan) (Response, error) {
 	doc, e := s.resourceDocument(r)
 	if e != nil {
 		return Response{}, e
@@ -327,12 +348,12 @@ func (s *UsersService) resourceResponse(r Resource, status int, p queryPlan) (Re
 	return Response{Status: status, ContentType: "application/scim+json", Body: body, ETag: r.Version, Location: s.location(r.ID)}, nil
 }
 
-func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc map[string]any) (out Response, err error) {
+func (s *protocolService) write(ctx context.Context, c Connection, r Request, doc map[string]any) (out Response, err error) {
 	p, e := s.planQuery(r.Query)
 	if e != nil {
 		return Response{}, e
 	}
-	if r.Operation != UserCreate {
+	if r.Operation != s.profile.create {
 		if !safeID(r.ResourceID) {
 			return Response{}, failure(404, "")
 		}
@@ -348,7 +369,7 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 	var input WritableResource
 	var patch Patch
 	switch r.Operation {
-	case UserCreate, UserReplace:
+	case s.profile.create, s.profile.replace:
 		if doc == nil {
 			return Response{}, failure(400, "invalidSyntax")
 		}
@@ -357,15 +378,15 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 			return Response{}, e
 		}
 		doc = writableDoc(input)
-	case UserPatch:
+	case s.profile.patch:
 		if doc == nil {
 			return Response{}, failure(400, "invalidSyntax")
 		}
-		patch, e = parsePatchDocument(doc, s.config.Extensions, s.config.Limits)
+		patch, e = parsePatchDocument(doc, s.config.Extensions, s.config.Limits, s.profile.schema)
 		if e != nil {
 			return Response{}, e
 		}
-	case UserDelete:
+	case s.profile.delete:
 		if len(r.Body) > 0 {
 			return Response{}, failure(400, "invalidSyntax")
 		}
@@ -395,7 +416,7 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 	if e != nil {
 		return Response{}, e
 	}
-	prepared, e := s.config.Store.Prepare(prepareCtx, intent)
+	prepared, e := s.prepareWrite(prepareCtx, intent)
 	prepareCancel()
 	if e != nil {
 		return Response{}, storeError(e)
@@ -427,13 +448,13 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 		} else {
 			prepared.Failure = failure(503, "")
 		}
-		if e := s.config.Store.Abort(cleanup, prepared); e != nil {
+		if e := s.abortWrite(cleanup, prepared); e != nil {
 			out = Response{}
 			err = failure(503, "")
 		}
 	}()
 	current := prepared.Current
-	if r.Operation != UserCreate {
+	if r.Operation != s.profile.create {
 		if current == nil {
 			return Response{}, failure(404, "")
 		}
@@ -454,19 +475,19 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 	} else if current != nil {
 		return Response{}, failure(409, "uniqueness")
 	}
-	if r.Operation == UserReplace {
+	if r.Operation == s.profile.replace {
 		input, e = s.normalize(doc, current.Attributes)
 		if e != nil {
 			return Response{}, e
 		}
 	}
-	if r.Operation == UserPatch {
+	if r.Operation == s.profile.patch {
 		input, e = s.applyPatch(*current, patch)
 		if e != nil {
 			return Response{}, e
 		}
 	}
-	change := Change{Delete: r.Operation == UserDelete}
+	change := Change{Delete: r.Operation == s.profile.delete}
 	if !change.Delete {
 		// Validate the prospective escaped output before invoking representation
 		// policy. Metadata has bounded server-owned shapes, not attacker lengths.
@@ -476,15 +497,19 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 		}
 		preview := writableDoc(input)
 		preview["id"] = previewID
-		preview["meta"] = map[string]any{"resourceType": "User", "created": s.config.Now().UTC().Format(time.RFC3339Nano), "lastModified": s.config.Now().UTC().Format(time.RFC3339Nano), "location": s.location(previewID), "version": "\"0000000000000000000000\""}
+		preview["meta"] = map[string]any{"resourceType": s.profile.schema.Name, "created": s.config.Now().UTC().Format(time.RFC3339Nano), "lastModified": s.config.Now().UTC().Format(time.RFC3339Nano), "location": s.location(previewID), "version": "\"0000000000000000000000\""}
 		if _, err := encodedSize(s.project(preview, p), s.config.Limits.ResponseBytes); err != nil {
 			return Response{}, failure(400, "invalidValue")
+		}
+		var groupInput map[string]any
+		if s.profile.schema.ID == groupSchema {
+			groupInput = cloneMap(input.Attributes)
 		}
 		mapCtx, mapCancel, e := s.authorityContext(ctx, c)
 		if e != nil {
 			return Response{}, e
 		}
-		mapped, e := s.config.Mapper.MapUser(mapCtx, c.Scope, input)
+		mapped, e := s.mapResource(mapCtx, c.Scope, input)
 		mapCancel()
 		if e != nil {
 			return Response{}, failure(409, "")
@@ -495,6 +520,12 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 		old := map[string]any{}
 		if current != nil {
 			old = current.Attributes
+		}
+		if s.profile.schema.ID == groupSchema {
+			// PATCH has already checked each transition against the preceding
+			// membership state; an explicit remove then add creates a new value.
+			// Mapping cannot rewrite the immutable members accepted by that path.
+			old = groupInput
 		}
 		mapped, e = s.normalize(writableDoc(mapped), old)
 		if e != nil {
@@ -523,7 +554,7 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 			return Response{}, failure(503, "")
 		}
 		resource := Resource{ID: id, Version: Version(`"` + string(version) + `"`), CreatedAt: created, LastModified: now, Schemas: append([]string(nil), mapped.Schemas...), ExternalID: mapped.ExternalID, Attributes: cloneMap(mapped.Attributes)}
-		if r.Operation == UserPatch && current != nil && s.sameProjection(*current, mapped) {
+		if r.Operation == s.profile.patch && current != nil && s.sameProjection(*current, mapped) {
 			resource = cloneResource(*current)
 		}
 		// A response that cannot fit is rejected before commit, not after mutation.
@@ -551,10 +582,10 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 		return Response{}, e
 	}
 	abort = false // From Commit invocation onward, arbitrary errors are UNKNOWN.
-	result, e := s.config.Store.Commit(commitCtx, prepared, change)
+	result, e := s.commitWrite(commitCtx, prepared, change)
 	commitCancel()
 	if e != nil {
-		if errors.Is(e, ErrPreconditionFailed) || errors.Is(e, ErrConflict) || errors.Is(e, ErrUniqueness) || errors.Is(e, ErrNotFound) {
+		if errors.Is(e, ErrPreconditionFailed) || errors.Is(e, ErrConflict) || errors.Is(e, ErrUniqueness) || errors.Is(e, ErrNotFound) || errors.Is(e, ErrInvalidGroupMember) {
 			abort = true
 		}
 		return Response{}, storeError(e)
@@ -577,7 +608,7 @@ func (s *UsersService) write(ctx context.Context, c Connection, r Request, doc m
 	return s.writeResponse(result, r.Operation, p)
 }
 
-func (s *UsersService) sameProjection(current Resource, next WritableResource) bool {
+func (s *protocolService) sameProjection(current Resource, next WritableResource) bool {
 	if current.ExternalID != next.ExternalID || len(current.Schemas) != len(next.Schemas) {
 		return false
 	}
@@ -593,7 +624,7 @@ func (s *UsersService) sameProjection(current Resource, next WritableResource) b
 			return false
 		}
 	}
-	attrs := append(coreAttributes(), commonAttributes()...)
+	attrs := append(s.profile.schema.Attributes, commonAttributes()...)
 	for _, a := range attrs {
 		old, new := current.Attributes[a.Name], next.Attributes[a.Name]
 		if !present(old) && !present(new) {
@@ -614,14 +645,14 @@ func (s *UsersService) sameProjection(current Resource, next WritableResource) b
 	}
 	return true
 }
-func (s *UsersService) writeResponse(result WriteResult, op Operation, p queryPlan) (Response, error) {
+func (s *protocolService) writeResponse(result WriteResult, op Operation, p queryPlan) (Response, error) {
 	if result.Outcome == WriteOutcomeNotCommitted && result.Resource == nil && result.Failure != nil {
 		return Response{}, NewError(result.Failure.StatusCode(), result.Failure.kind)
 	}
 	if result.Outcome != WriteOutcomeCommitted || result.Failure != nil {
 		return Response{}, failure(503, "")
 	}
-	if op == UserDelete {
+	if op == s.profile.delete {
 		if result.Resource != nil {
 			return Response{}, failure(503, "")
 		}
@@ -631,7 +662,7 @@ func (s *UsersService) writeResponse(result WriteResult, op Operation, p queryPl
 		return Response{}, failure(503, "")
 	}
 	status := 200
-	if op == UserCreate {
+	if op == s.profile.create {
 		status = 201
 	}
 	return s.resourceResponse(*result.Resource, status, p)

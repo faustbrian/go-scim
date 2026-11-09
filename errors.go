@@ -93,13 +93,13 @@ func errorTypeForOperation(kind string, op Operation) bool {
 	case "":
 		return true
 	case "invalidFilter", "tooMany":
-		return op == UserList || op == UserSearch || op == Search
+		return op == UserList || op == UserSearch || op == GroupList || op == GroupSearch || op == Search
 	case "invalidPath", "noTarget":
-		return op == UserPatch
+		return op == UserPatch || op == GroupPatch
 	case "mutability":
-		return op == UserCreate || op == UserReplace || op == UserPatch
+		return op == UserCreate || op == UserReplace || op == UserPatch || op == GroupCreate || op == GroupReplace || op == GroupPatch
 	case "invalidSyntax":
-		return op == UserCreate || op == UserReplace || op == UserSearch || op == Search
+		return op == UserCreate || op == UserReplace || op == UserSearch || op == GroupCreate || op == GroupReplace || op == GroupSearch || op == Search
 	case "uniqueness":
 		return op == UserCreate || op == UserReplace || op == UserPatch
 	case "invalidValue", "invalidVers":

@@ -13,6 +13,7 @@ import (
 
 const (
 	userSchema         = "urn:ietf:params:scim:schemas:core:2.0:User"
+	groupSchema        = "urn:ietf:params:scim:schemas:core:2.0:Group"
 	schemaSchema       = "urn:ietf:params:scim:schemas:core:2.0:Schema"
 	resourceTypeSchema = "urn:ietf:params:scim:schemas:core:2.0:ResourceType"
 	configSchema       = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
@@ -35,9 +36,13 @@ type Attribute struct {
 	Returned      string      `json:"returned"`
 	Uniqueness    string      `json:"uniqueness"`
 	SubAttributes []Attribute `json:"subAttributes,omitempty"`
+	// ReferenceTypes and CanonicalValues describe the fixed Group member
+	// schema. Configured extension use is unsupported and fails construction.
+	ReferenceTypes  []string `json:"referenceTypes,omitempty"`
+	CanonicalValues []string `json:"canonicalValues,omitempty"`
 }
 
-// Schema is a named, bounded optional User extension. The fixed core schema
+// Schema is a named, bounded optional resource extension. The fixed core schema
 // cannot be overridden. Extension schemas are explicit, not inferred from data.
 type Schema struct {
 	ID          string      `json:"id"`
@@ -109,6 +114,8 @@ func cloneSchemas(in []Schema) []Schema {
 func cloneAttrs(in []Attribute) []Attribute {
 	out := slices.Clone(in)
 	for i := range out {
+		out[i].ReferenceTypes = slices.Clone(in[i].ReferenceTypes)
+		out[i].CanonicalValues = slices.Clone(in[i].CanonicalValues)
 		if out[i].Type == "binary" || out[i].Type == "reference" {
 			out[i].CaseExact = true
 		}
@@ -131,6 +138,11 @@ func safeID(s string) bool {
 func validName(s string) bool {
 	if s == "" || len(s) > 128 {
 		return false
+	}
+	// RFC 7643 2.4's standard reference sub-attribute is the reserved
+	// exception to the ordinary ALPHA-leading attribute-name grammar.
+	if strings.EqualFold(s, "$ref") {
+		return true
 	}
 	for i, r := range s {
 		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || i > 0 && (r >= '0' && r <= '9' || r == '_' || r == '-' || r == '$')) {
@@ -168,7 +180,7 @@ func validateSchemas(ext []Schema, l Limits) bool {
 		for _, a := range as {
 			total++
 			key := strings.ToLower(a.Name)
-			if total > l.ResourceAttributes || !validName(a.Name) || names[key] || !slices.Contains([]string{"string", "boolean", "integer", "decimal", "dateTime", "reference", "complex", "binary"}, a.Type) || !slices.Contains([]string{"readOnly", "readWrite", "immutable", "writeOnly"}, a.Mutability) || !slices.Contains([]string{"always", "never", "default", "request"}, a.Returned) || !slices.Contains([]string{"none", "server"}, a.Uniqueness) || a.Type != "complex" && len(a.SubAttributes) > 0 || a.Mutability == "writeOnly" && a.Returned != "never" {
+			if total > l.ResourceAttributes || !validName(a.Name) || names[key] || !slices.Contains([]string{"string", "boolean", "integer", "decimal", "dateTime", "reference", "complex", "binary"}, a.Type) || !slices.Contains([]string{"readOnly", "readWrite", "immutable", "writeOnly"}, a.Mutability) || !slices.Contains([]string{"always", "never", "default", "request"}, a.Returned) || !slices.Contains([]string{"none", "server"}, a.Uniqueness) || a.Type != "complex" && len(a.SubAttributes) > 0 || a.Mutability == "writeOnly" && a.Returned != "never" || len(a.ReferenceTypes) > 0 || len(a.CanonicalValues) > 0 {
 				return false
 			}
 			names[key] = true
@@ -188,9 +200,9 @@ func validateSchemas(ext []Schema, l Limits) bool {
 	return true
 }
 
-func (s *UsersService) schema(id string) (Schema, bool) {
-	if id == userSchema {
-		return Schema{ID: userSchema, Name: "User", Description: "Selected Users profile", Attributes: coreAttributes()}, true
+func (s *protocolService) schema(id string) (Schema, bool) {
+	if id == s.profile.schema.ID {
+		return s.profile.schema, true
 	}
 	for _, schema := range s.config.Extensions {
 		if schema.ID == id {
@@ -202,7 +214,7 @@ func (s *UsersService) schema(id string) (Schema, bool) {
 
 // normalize validates writable data and canonicalizes attribute names only. It
 // never normalizes identifiers, mutates caller input or infers account ownership.
-func (s *UsersService) normalize(doc map[string]any, old map[string]any) (WritableResource, error) {
+func (s *protocolService) normalize(doc map[string]any, old map[string]any) (WritableResource, error) {
 	raw, ok := lookup(doc, "schemas")
 	if !ok {
 		return WritableResource{}, failure(400, "invalidValue")
@@ -224,7 +236,7 @@ func (s *UsersService) normalize(doc map[string]any, old map[string]any) (Writab
 		declared[strings.ToLower(id)] = true
 		result.Schemas = append(result.Schemas, id)
 	}
-	if !declared[strings.ToLower(userSchema)] {
+	if !declared[strings.ToLower(s.profile.schema.ID)] {
 		return WritableResource{}, failure(400, "invalidValue")
 	}
 	for name, value := range doc {
@@ -245,7 +257,7 @@ func (s *UsersService) normalize(doc map[string]any, old map[string]any) (Writab
 			result.ExternalID = v
 			continue
 		}
-		if schema, ok := s.schema(name); ok && name != userSchema {
+		if schema, ok := s.schema(name); ok && name != s.profile.schema.ID {
 			if !declared[strings.ToLower(name)] {
 				return WritableResource{}, failure(400, "invalidValue")
 			}
@@ -261,7 +273,7 @@ func (s *UsersService) normalize(doc map[string]any, old map[string]any) (Writab
 			result.Attributes[name] = normalized
 			continue
 		}
-		a, ok := findAttribute(coreAttributes(), name)
+		a, ok := findAttribute(s.profile.schema.Attributes, name)
 		if !ok {
 			return WritableResource{}, failure(400, "invalidValue")
 		}
@@ -273,9 +285,21 @@ func (s *UsersService) normalize(doc map[string]any, old map[string]any) (Writab
 			result.Attributes[a.Name] = v
 		}
 	}
-	for _, a := range coreAttributes() {
+	for _, a := range s.profile.schema.Attributes {
 		if a.Required && !present(result.Attributes[a.Name]) {
 			return WritableResource{}, failure(400, "invalidValue")
+		}
+	}
+	if s.profile.schema.ID == groupSchema {
+		members, err := s.normalizeGroupMembers(result.Attributes["members"], old["members"])
+		if err != nil {
+			return WritableResource{}, err
+		}
+		if members != nil {
+			result.Attributes["members"] = members
+		}
+		if err := checkWritable(result, s.config.Limits); err != nil {
+			return WritableResource{}, err
 		}
 	}
 	// Immutable fields cannot be erased by omitting the extension or its
@@ -759,8 +783,8 @@ func retainReadOnly(old, next map[string]any, attrs []Attribute) map[string]any 
 	}
 	return out
 }
-func (s *UsersService) writableAttributes(doc map[string]any) map[string]any {
-	out := stripReadOnly(doc, coreAttributes())
+func (s *protocolService) writableAttributes(doc map[string]any) map[string]any {
+	out := stripReadOnly(doc, s.profile.schema.Attributes)
 	for _, schema := range s.config.Extensions {
 		if m, ok := out[schema.ID].(map[string]any); ok {
 			out[schema.ID] = stripReadOnly(m, schema.Attributes)
@@ -768,8 +792,8 @@ func (s *UsersService) writableAttributes(doc map[string]any) map[string]any {
 	}
 	return out
 }
-func (s *UsersService) preserveReadOnly(current Resource, w WritableResource) WritableResource {
-	w.Attributes = retainReadOnly(current.Attributes, w.Attributes, coreAttributes())
+func (s *protocolService) preserveReadOnly(current Resource, w WritableResource) WritableResource {
+	w.Attributes = retainReadOnly(current.Attributes, w.Attributes, s.profile.schema.Attributes)
 	for _, schema := range s.config.Extensions {
 		prior, _ := current.Attributes[schema.ID].(map[string]any)
 		next, _ := w.Attributes[schema.ID].(map[string]any)

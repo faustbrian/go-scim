@@ -37,7 +37,7 @@ func ParsePatch(body []byte, extensions []Schema, limits Limits) (Patch, error) 
 	}
 	return parsePatchDocument(doc, extensions, limits)
 }
-func parsePatchDocument(doc map[string]any, ext []Schema, l Limits) (Patch, error) {
+func parsePatchDocument(doc map[string]any, ext []Schema, l Limits, core ...Schema) (Patch, error) {
 	for key := range doc {
 		if !strings.EqualFold(key, "schemas") && !strings.EqualFold(key, "Operations") {
 			return Patch{}, failure(400, "invalidValue")
@@ -89,7 +89,7 @@ func parsePatchDocument(doc map[string]any, ext []Schema, l Limits) (Patch, erro
 			return Patch{}, failure(400, "invalidValue")
 		}
 		if path != "" {
-			if _, e := parsePatchPath(path, ext, l); e != nil {
+			if _, e := parsePatchPath(path, ext, l, core...); e != nil {
 				return Patch{}, e
 			}
 		} else {
@@ -97,7 +97,7 @@ func parsePatchDocument(doc map[string]any, ext []Schema, l Limits) (Patch, erro
 			if !ok || len(values) == 0 {
 				return Patch{}, failure(400, "invalidValue")
 			}
-			if err := pathlessTargets(values, ext, l); err != nil {
+			if err := pathlessTargets(values, ext, l, core...); err != nil {
 				return Patch{}, err
 			}
 			for key, v := range values {
@@ -111,7 +111,7 @@ func parsePatchDocument(doc map[string]any, ext []Schema, l Limits) (Patch, erro
 					}
 					continue
 				}
-				p, e := parsePatchPath(key, ext, l)
+				p, e := parsePatchPath(key, ext, l, core...)
 				if e != nil {
 					return Patch{}, e
 				}
@@ -123,7 +123,7 @@ func parsePatchDocument(doc map[string]any, ext []Schema, l Limits) (Patch, erro
 		// For a path-targeted complex value, reject credential subattributes before
 		// admission too, even if a later schema validation would also reject them.
 		if path != "" && hasValue {
-			target, e := parsePatchPath(path, ext, l)
+			target, e := parsePatchPath(path, ext, l, core...)
 			if e != nil {
 				return Patch{}, e
 			}
@@ -203,7 +203,7 @@ type patchPath struct {
 	tail     attributePath
 }
 
-func parsePatchPath(raw string, ext []Schema, l Limits) (patchPath, error) {
+func parsePatchPath(raw string, ext []Schema, l Limits, core ...Schema) (patchPath, error) {
 	if len(raw) > l.PathBytes {
 		return patchPath{}, failure(400, "invalidPath")
 	}
@@ -248,7 +248,7 @@ func parsePatchPath(raw string, ext []Schema, l Limits) (patchPath, error) {
 			}
 		}
 	}
-	path, e := resolveAttributePath(prefix, ext, l, nil, true)
+	path, e := resolveAttributePath(prefix, ext, l, nil, true, core...)
 	if e != nil {
 		return patchPath{}, e
 	}
@@ -267,14 +267,14 @@ func parsePatchPath(raw string, ext []Schema, l Limits) (patchPath, error) {
 		if a.Type != "complex" || !a.MultiValued || selector == "" {
 			return p, failure(400, "invalidPath")
 		}
-		f, e := parseFilter(selector, ext, l, a.SubAttributes)
+		f, e := parseFilter(selector, ext, l, a.SubAttributes, core...)
 		if e != nil {
 			return p, failure(400, "invalidPath")
 		}
 		p.selector = f
 		p.selected = true
 		if tail != "" {
-			p.tail, e = resolveAttributePath(tail, ext, l, a.SubAttributes, true)
+			p.tail, e = resolveAttributePath(tail, ext, l, a.SubAttributes, true, core...)
 			if e != nil {
 				return p, e
 			}
@@ -288,10 +288,22 @@ func parsePatchPath(raw string, ext []Schema, l Limits) (patchPath, error) {
 	return p, nil
 }
 
-func (s *UsersService) applyPatch(current Resource, p Patch) (WritableResource, error) {
+func (s *protocolService) applyPatch(current Resource, p Patch) (WritableResource, error) {
 	doc := writableDoc(WritableResource{Schemas: current.Schemas, ExternalID: current.ExternalID, Attributes: s.writableAttributes(current.Attributes)})
 	budget := patchBudget{root: doc, limits: s.config.Limits}
+	if s.profile.schema.ID == groupSchema {
+		budget.groupMembers = &s.groups.members
+	}
 	for _, op := range p.operations {
+		previous := current.Attributes
+		if s.profile.schema.ID == groupSchema {
+			previous = cloneMap(doc)
+			var err error
+			op, err = s.canonicalGroupPatchOperation(op, doc)
+			if err != nil {
+				return WritableResource{}, err
+			}
+		}
 		if op.Path == "" {
 			values := op.Value.(map[string]any)
 			for key, v := range values {
@@ -319,7 +331,7 @@ func (s *UsersService) applyPatch(current Resource, p Patch) (WritableResource, 
 					}
 					continue
 				}
-				path, e := parsePatchPath(key, s.config.Extensions, s.config.Limits)
+				path, e := parsePatchPath(key, s.config.Extensions, s.config.Limits, s.profile.schema)
 				if e != nil {
 					return WritableResource{}, e
 				}
@@ -328,7 +340,7 @@ func (s *UsersService) applyPatch(current Resource, p Patch) (WritableResource, 
 				}
 			}
 		} else {
-			path, e := parsePatchPath(op.Path, s.config.Extensions, s.config.Limits)
+			path, e := parsePatchPath(op.Path, s.config.Extensions, s.config.Limits, s.profile.schema)
 			if e != nil {
 				return WritableResource{}, e
 			}
@@ -341,12 +353,15 @@ func (s *UsersService) applyPatch(current Resource, p Patch) (WritableResource, 
 		if err := checkTree(doc, s.config.Limits); err != nil {
 			return WritableResource{}, failure(400, "invalidValue")
 		}
-		normalized, e := s.normalize(doc, current.Attributes)
+		normalized, e := s.normalize(doc, previous)
 		if e != nil {
 			return WritableResource{}, e
 		}
 		doc = writableDoc(normalized)
 		budget.root = doc
+	}
+	if s.profile.schema.ID == groupSchema {
+		return s.normalize(doc, nil)
 	}
 	return s.normalize(doc, current.Attributes)
 }
@@ -462,10 +477,16 @@ func walkChange(obj map[string]any, parts []Attribute, p patchPath, verb string,
 		if verb == "replace" {
 			// RFC 7644 3.5.2.3 replaces selected whole records, unlike a
 			// singular complex attribute's supplied-subattribute merge.
-			if err := budget.element(array, index, value); err != nil {
+			one := a
+			one.MultiValued = false
+			candidate, err := normalizeValue(value, one, m)
+			if err != nil {
 				return err
 			}
-			array[index] = cloneValue(value)
+			if err := budget.element(array, index, candidate); err != nil {
+				return err
+			}
+			array[index] = cloneValue(candidate)
 			out = append(out, array[index])
 		} else {
 			incoming, ok := value.(map[string]any)
@@ -640,7 +661,7 @@ func normalizePatchValue(value any, a Attribute) (any, error) {
 	return out, nil
 }
 
-func pathlessTargets(values map[string]any, ext []Schema, limits Limits) error {
+func pathlessTargets(values map[string]any, ext []Schema, limits Limits, core ...Schema) error {
 	targets := []string{}
 	add := func(target string) error {
 		for _, old := range targets {
@@ -668,7 +689,7 @@ func pathlessTargets(values map[string]any, ext []Schema, limits Limits) error {
 			}
 			continue
 		}
-		path, err := parsePatchPath(key, ext, limits)
+		path, err := parsePatchPath(key, ext, limits, core...)
 		if err != nil {
 			return err
 		}

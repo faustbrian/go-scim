@@ -77,14 +77,15 @@ type attributePath struct {
 	defaultPrimary  bool
 }
 
-func resolvePath(raw string, ext []Schema, l Limits, local []Attribute) (attributePath, error) {
-	return resolveAttributePath(raw, ext, l, local, false)
+func resolvePath(raw string, ext []Schema, l Limits, local []Attribute, core ...Schema) (attributePath, error) {
+	return resolveAttributePath(raw, ext, l, local, false, core...)
 }
-func resolveAttributePath(raw string, ext []Schema, l Limits, local []Attribute, write bool) (attributePath, error) {
+func resolveAttributePath(raw string, ext []Schema, l Limits, local []Attribute, write bool, core ...Schema) (attributePath, error) {
 	if raw == "" || len(raw) > l.PathBytes || !utf8.ValidString(raw) {
 		return attributePath{}, failure(400, "invalidPath")
 	}
-	attrs := append(commonAttributes(), coreAttributes()...)
+	selected := selectedCore(core)
+	attrs := append(commonAttributes(), selected.Attributes...)
 	p := attributePath{}
 	if local != nil {
 		attrs = local
@@ -95,7 +96,7 @@ func resolveAttributePath(raw string, ext []Schema, l Limits, local []Attribute,
 		}
 
 		var owner Schema
-		for _, schema := range append([]Schema{{ID: userSchema}}, ext...) {
+		for _, schema := range append([]Schema{{ID: selected.ID}}, ext...) {
 			if strings.HasPrefix(raw, schema.ID+":") && len(schema.ID) > len(owner.ID) {
 				owner = schema
 			}
@@ -104,7 +105,7 @@ func resolveAttributePath(raw string, ext []Schema, l Limits, local []Attribute,
 			return p, failure(400, "invalidPath")
 		}
 		raw = strings.TrimPrefix(raw, owner.ID+":")
-		if owner.ID != userSchema {
+		if owner.ID != selected.ID {
 			p.extension = owner.ID
 			attrs = owner.Attributes
 		}
@@ -279,9 +280,10 @@ type filterParser struct {
 	limits     Limits
 	extensions []Schema
 	local      []Attribute
+	core       Schema
 }
 
-func parseFilter(expr string, ext []Schema, l Limits, local []Attribute) (Filter, error) {
+func parseFilter(expr string, ext []Schema, l Limits, local []Attribute, core ...Schema) (Filter, error) {
 	if expr == "" {
 		return Filter{}, nil
 	}
@@ -289,7 +291,7 @@ func parseFilter(expr string, ext []Schema, l Limits, local []Attribute) (Filter
 	if e != nil {
 		return Filter{}, e
 	}
-	p := filterParser{tokens: tokens, limits: l, extensions: ext, local: local}
+	p := filterParser{tokens: tokens, limits: l, extensions: ext, local: local, core: selectedCore(core)}
 	n, e := p.expression(1, 0)
 	if e != nil || p.pos != len(tokens) {
 		return Filter{}, failure(400, "invalidFilter")
@@ -382,7 +384,7 @@ func (p *filterParser) atom(depth int) (*filterNode, error) {
 		return nil, failure(400, "invalidFilter")
 	}
 	p.pos++
-	path, e := resolvePath(token.text, p.extensions, p.limits, p.local)
+	path, e := resolvePath(token.text, p.extensions, p.limits, p.local, p.core)
 	if e != nil {
 		return nil, failure(400, "invalidFilter")
 	}

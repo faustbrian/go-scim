@@ -64,13 +64,30 @@ type Config struct {
 // UsersService executes the selected profile. It retains no mutable resources,
 // locks, goroutines or background work. Concurrent safety depends on its trusted
 // dependencies; each request receives detached inputs and a bounded context.
-type UsersService struct{ config Config }
+type UsersService struct{ service *protocolService }
+
+type protocolService struct {
+	config  Config
+	profile resourceProfile
+	groups  groupDependencies
+}
 
 // NewUsersService validates the entire effective runtime/discovery snapshot.
 // Zero configuration, missing dependencies and impossible discovery limits fail
 // without making external calls. It does not validate persistence or authority.
 func NewUsersService(c Config) (*UsersService, error) {
-	if nilInterface(c.Store) || nilInterface(c.Authenticator) || nilInterface(c.Authorizer) || nilInterface(c.Mapper) || !c.Limits.valid() || c.RequestTimeout <= 0 || c.RequestTimeout > time.Minute {
+	if nilInterface(c.Store) || nilInterface(c.Mapper) {
+		return nil, failure(400, "invalidValue")
+	}
+	s, err := newProtocolService(c, userProfile(), groupDependencies{})
+	if err != nil {
+		return nil, err
+	}
+	return &UsersService{service: s}, nil
+}
+
+func newProtocolService(c Config, profile resourceProfile, groups groupDependencies) (*protocolService, error) {
+	if nilInterface(c.Authenticator) || nilInterface(c.Authorizer) || !c.Limits.valid() || c.RequestTimeout <= 0 || c.RequestTimeout > time.Minute {
 		return nil, failure(400, "invalidValue")
 	}
 	u, e := url.Parse(c.BaseURL)
@@ -83,12 +100,17 @@ func NewUsersService(c Config) (*UsersService, error) {
 	if !validateSchemas(c.Extensions, c.Limits) {
 		return nil, failure(400, "invalidValue")
 	}
+	for _, extension := range c.Extensions {
+		if strings.EqualFold(extension.ID, profile.schema.ID) {
+			return nil, failure(400, "invalidValue")
+		}
+	}
 	c.Extensions = cloneSchemas(c.Extensions)
 	c.BaseURL = strings.TrimRight(c.BaseURL, "/")
 	if c.Now == nil {
 		c.Now = time.Now
 	}
-	s := &UsersService{config: c}
+	s := &protocolService{config: c, profile: profile, groups: groups}
 	for _, op := range []Operation{ServiceProviderConfig, SchemasList, ResourceTypesList} {
 		d, _ := s.discovery(op, "")
 		if _, e := s.encodeDiscovery(d); e != nil {

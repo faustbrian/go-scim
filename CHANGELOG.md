@@ -36,6 +36,13 @@
 
 ### Added
 
+- An additive storage-neutral Groups protocol profile with distinct GroupStore
+  and GroupMapper contracts, matching discovery, Group CRUD/atomic PATCH and
+  bounded filter/sort/page/search. Existing Users APIs remain User-specific.
+- Bounded immutable typed Group members with local canonical references,
+  duplicate-identity denial, explicit atomic same-connection existence fencing,
+  and the existing strong-version, original-authority and replay/outcome rules.
+  Native organization reconciliation and provisioning remain separate work.
 - A storage-neutral SCIM 2.0 Users protocol-service profile with authenticated,
   authorized organization/provider scope, accurate discovery, create/read/replace,
   atomic PATCH intent, bounded deterministic list/search and delete/absence.

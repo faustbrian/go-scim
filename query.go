@@ -15,7 +15,7 @@ type queryPlan struct {
 	supplied         map[string]bool
 }
 
-func (s *UsersService) planQuery(q Query) (queryPlan, error) {
+func (s *protocolService) planQuery(q Query) (queryPlan, error) {
 	p := queryPlan{query: q}
 	l := s.config.Limits
 	if len(q.Attributes) > l.BodyBytes || len(q.ExcludedAttributes) > l.BodyBytes {
@@ -25,7 +25,7 @@ func (s *UsersService) planQuery(q Query) (queryPlan, error) {
 		return p, failure(400, "invalidValue")
 	}
 	var e error
-	p.filter, e = parseFilter(q.Filter, s.config.Extensions, l, nil)
+	p.filter, e = parseFilter(q.Filter, s.config.Extensions, l, nil, s.profile.schema)
 	if e != nil {
 		return p, e
 	}
@@ -33,7 +33,7 @@ func (s *UsersService) planQuery(q Query) (queryPlan, error) {
 		return p, failure(400, "invalidValue")
 	}
 	if q.SortBy != "" {
-		path, e := resolvePath(q.SortBy, s.config.Extensions, l, nil)
+		path, e := resolvePath(q.SortBy, s.config.Extensions, l, nil, s.profile.schema)
 		if e != nil {
 			return p, failure(400, "invalidValue")
 		}
@@ -61,7 +61,7 @@ func (s *UsersService) planQuery(q Query) (queryPlan, error) {
 		names := strings.Split(list.raw, ",")
 		seen := map[string]bool{}
 		for _, name := range names {
-			path, e := resolvePath(strings.TrimSpace(name), s.config.Extensions, l, nil)
+			path, e := resolvePath(strings.TrimSpace(name), s.config.Extensions, l, nil, s.profile.schema)
 			if e != nil {
 				return p, failure(400, "invalidValue")
 			}
@@ -149,12 +149,12 @@ func searchQuery(doc map[string]any) (Query, error) {
 	return q, nil
 }
 
-func (s *UsersService) list(ctx context.Context, c Connection, p queryPlan) (Response, error) {
+func (s *protocolService) list(ctx context.Context, c Connection, p queryPlan) (Response, error) {
 	readCtx, readCancel, e := s.authorityContext(ctx, c)
 	if e != nil {
 		return Response{}, e
 	}
-	snap, e := s.config.Store.Snapshot(readCtx, c.Scope, SnapshotBudget{Resources: s.config.Limits.SnapshotResources, Bytes: s.config.Limits.SnapshotBytes})
+	snap, e := s.snapshotResources(readCtx, c.Scope, SnapshotBudget{Resources: s.config.Limits.SnapshotResources, Bytes: s.config.Limits.SnapshotBytes})
 	readCancel()
 	if e != nil {
 		return Response{}, storeError(e)
@@ -284,9 +284,9 @@ func sortValue(doc map[string]any, path attributePath) any {
 	}
 	return current
 }
-func (s *UsersService) project(doc map[string]any, p queryPlan) map[string]any {
+func (s *protocolService) project(doc map[string]any, p queryPlan) map[string]any {
 	out := cloneMap(doc)
-	pruneReturned(out, append(commonAttributes(), coreAttributes()...), "", p, true)
+	pruneReturned(out, append(commonAttributes(), s.profile.schema.Attributes...), "", p, true)
 	for _, schema := range s.config.Extensions {
 		if obj, ok := out[schema.ID].(map[string]any); ok {
 			pruneReturned(obj, schema.Attributes, schema.ID+":", p, true)
@@ -362,7 +362,7 @@ func pruneReturned(doc map[string]any, attrs []Attribute, prefix string, p query
 // command on every invocation, including Store replay; no new durable state or
 // replay owner is needed. Paths are canonical and selectors identify attributes,
 // not a separate query or disclosure authority.
-func (s *UsersService) suppliedPaths(doc map[string]any, patch Patch) (map[string]bool, error) {
+func (s *protocolService) suppliedPaths(doc map[string]any, patch Patch) (map[string]bool, error) {
 	out := map[string]bool{}
 	var visit func(any, Attribute, string)
 	visit = func(value any, a Attribute, path string) {
@@ -396,7 +396,7 @@ func (s *UsersService) suppliedPaths(doc map[string]any, patch Patch) (map[strin
 			}
 			return nil
 		}
-		path, err := parsePatchPath(raw, s.config.Extensions, s.config.Limits)
+		path, err := parsePatchPath(raw, s.config.Extensions, s.config.Limits, s.profile.schema)
 		if err != nil {
 			return err
 		}

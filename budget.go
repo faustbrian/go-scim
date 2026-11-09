@@ -124,6 +124,12 @@ func encodedSize(value any, maximum int) (int, error) {
 				if len(a.SubAttributes) > 0 {
 					fields["subAttributes"] = a.SubAttributes
 				}
+				if len(a.ReferenceTypes) > 0 {
+					fields["referenceTypes"] = a.ReferenceTypes
+				}
+				if len(a.CanonicalValues) > 0 {
+					fields["canonicalValues"] = a.CanonicalValues
+				}
 				if !size(fields, depth+1) {
 					return false
 				}
@@ -165,8 +171,26 @@ func snapshotResourceSize(r Resource, maximum int) (int, error) {
 type patchConcat struct{ before, added []any }
 
 type patchBudget struct {
-	root   map[string]any
-	limits Limits
+	root         map[string]any
+	limits       Limits
+	groupMembers *int
+}
+
+func (b patchBudget) checkGroupMembers() error {
+	if b.groupMembers == nil {
+		return nil
+	}
+	count := 0
+	switch values := b.root["members"].(type) {
+	case []any:
+		count = len(values)
+	case patchConcat:
+		count = len(values.before) + len(values.added)
+	}
+	if count > *b.groupMembers {
+		return failure(400, "invalidValue")
+	}
+	return nil
 }
 
 func (b patchBudget) field(obj map[string]any, key string, proposed any) error {
@@ -179,6 +203,9 @@ func (b patchBudget) field(obj map[string]any, key string, proposed any) error {
 			delete(obj, key)
 		}
 	}()
+	if err := b.checkGroupMembers(); err != nil {
+		return err
+	}
 	if err := checkTree(b.root, b.limits); err != nil {
 		return failure(400, "invalidValue")
 	}

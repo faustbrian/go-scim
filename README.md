@@ -1,6 +1,6 @@
 # go-scim
 
-Storage-neutral, HTTP-independent SCIM 2.0 **Users protocol profile**, targeting
+Storage-neutral, HTTP-independent SCIM 2.0 **Users and Groups protocol profiles**, targeting
 Go 1.27. This is an unreleased implementation, not a turnkey provisioning backend,
 verified release, native adapter, or completion of the wider SCIM unit.
 
@@ -29,8 +29,14 @@ the versioned RFC 8265 UsernameCaseMapped/Unicode 17 profile. Stores must use
 `UsernameComparisonKey` and `UsernameComparisonProfile` for scoped atomic
 uniqueness; see the profile's preparation and index-upgrade contract below.
 
-Groups, Bulk, password/credential writes and connection lifecycle operations are
-not implemented. Groups are absent from ResourceTypes; ServiceProviderConfig
+`NewUsersService` remains Users-only. The additive
+[`NewGroupsService(GroupsConfig)` profile](docs/groups-profile.md) supports Group
+discovery, CRUD, atomic PATCH, bounded list/filter/sort/page and `Groups/.search`
+with distinct `GroupStore` and `GroupMapper` contracts. Group membership references
+cannot select another connection or treat a User projection as a Group.
+
+Bulk, password/credential writes and connection lifecycle operations remain
+unimplemented. Groups are absent from the Users service's ResourceTypes; ServiceProviderConfig
 advertises Bulk and change-password as unsupported. Every password or
 `returned: never` write is rejected at `DecideCredentialWrite` before mapping or
 store admission. Reading, filtering, sorting or explicitly projecting those
@@ -88,7 +94,10 @@ adapter. Do not infer database correctness from protocol tests.
 `Request`/`Response` do not depend on `net/http`. Transport composition owns actual
 routes, raw/decoded streaming limits, TLS, header parsing, deadlines and writing
 `*Error` with its `StatusCode()` and `application/scim+json`. It must expose no
-Groups/Bulk/connection-management routes for this profile. No HTTP server,
+Groups routes for a Users-only composition, or Users routes for a Groups-only
+composition. Neither service exposes Bulk/connection-management routes. Combined
+root search/discovery is a later integration obligation, not implemented by
+silently routing Groups through the Users store. No HTTP server,
 background goroutine, environment lookup, database, network client or global
 registration is started by this package.
 
@@ -96,7 +105,7 @@ Root SCIM consumes identity and organization types; it does not depend on all
 SSO implementations. Native `scim/organization` mapping and `scim/postgres`
 persistence remain separate units. The latter additionally depends on the former;
 this protocol profile does not unlock or verify that adapter. The full platform
-scope remains 67 units, and this profile alone does not close M28.
+scope remains 67 units; these protocol profiles alone close neither M28 nor M29.
 
 [Security boundaries](docs/security.md), the [repository goal](docs/goal.md), and
 [private vulnerability reporting](SECURITY.md) describe the remaining integration
@@ -121,7 +130,7 @@ Both routes, and the `make fast-check` alias, check configuration, repository
 structure, cohesion, offline specification decisions, local documentation links
 and unconditional whole-tree secrets. The first two routes run no application
 tests, mutation campaigns or release checks. `runtime-check` runs the Users
-protocol tests with the race detector and Go vet; hosted Required runs that same
+and Groups protocol tests with the race detector and Go vet; hosted Required runs that same
 target as well. Hosted Required applies the same structural checks
 and scans committed changed content against the exact validated PR base or push
 before commit, without a fallback base or a duplicate full-history scan.

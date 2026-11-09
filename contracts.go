@@ -1,7 +1,7 @@
-// Package scim implements a storage-neutral, HTTP-independent SCIM 2.0 Users
-// profile. Trusted composition supplies credential validation, current policy,
+// Package scim implements explicit storage-neutral, HTTP-independent SCIM 2.0
+// Users and Groups profiles. Trusted composition supplies credential validation, current policy,
 // pure mapping and an atomic scoped store. It supplies no durable provisioning,
-// connection lifecycle, database, background work, Groups or Bulk implementation.
+// connection lifecycle, database, background work or Bulk implementation.
 package scim
 
 import (
@@ -33,7 +33,7 @@ const (
 	UserList              Operation = "identity.scim.user-list"
 	UserSearch            Operation = "identity.scim.user-search"
 	Search                Operation = "identity.scim.search"
-	// Group and Bulk operation identifiers are reserved and always fail closed.
+	// Group operations are selected only through NewGroupsService.
 	GroupCreate  Operation = "identity.scim.group-create"
 	GroupGet     Operation = "identity.scim.group-get"
 	GroupReplace Operation = "identity.scim.group-replace"
@@ -41,7 +41,8 @@ const (
 	GroupDelete  Operation = "identity.scim.group-delete"
 	GroupList    Operation = "identity.scim.group-list"
 	GroupSearch  Operation = "identity.scim.group-search"
-	Bulk         Operation = "identity.scim.bulk"
+	// Bulk is reserved and always fails closed.
+	Bulk Operation = "identity.scim.bulk"
 )
 
 // Scope partitions every resource and external ID. Structural IDs confer no

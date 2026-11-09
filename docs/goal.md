@@ -1,9 +1,9 @@
-# Goal: SCIM Users protocol-service profile
+# Goal: SCIM Users and Groups protocol-service profiles
 
 [Documentation index](README.md) · [Repository entry](../README.md)
 
 The current implementation assignment supersedes the earlier planning-only
-exclusion of source/runtime APIs for one finite, storage-neutral Users profile.
+exclusion of source/runtime APIs for finite, storage-neutral Users and Groups profiles.
 It does not make the module released, fully verified, durably provisioned or
 complete the wider SCIM/identity platform goal.
 
@@ -13,10 +13,13 @@ Implement accurate Users-profile discovery, authenticated/authorized
 connection-scoped User create/get/replace/PATCH/list/search/delete and subsequent
 absence through `UsersService.Execute`. Preserve schema and returned/mutability
 rules, required ETags, bounded deterministic queries, atomic PATCH intent and
-redacted typed RFC errors. Disabled Groups, Bulk and password changes must not
+redacted typed RFC errors. The additive Groups service provides the corresponding
+Group operations and `Groups/.search` through explicit `GroupStore`/`GroupMapper`
+boundaries, preserving Users-only compatibility. Unsupported resource types,
+Bulk and password changes must not
 be advertised or silently accepted.
 
-[Profile decisions](users-profile.md) document the exact supported schema,
+[Users decisions](users-profile.md) and [Groups decisions](groups-profile.md) document the exact supported schemas,
 configuration and store/authority obligations. Boundary doubles prove protocol
 behavior only, not real identity/organization authority, connection bearer
 validation, database transactions, durable replay or provisioning effects.
@@ -33,7 +36,7 @@ The full platform denominator remains 67 units. Root SCIM depends on committed
 identity/organization contracts, not completion of every SSO protocol.
 `scim/organization` mapping is separately owned and additionally depends on SSO
 synchronization authority. `scim/postgres` separately depends on that mapper;
-this protocol profile does not bypass that dependency or close M28.
+these protocol profiles bypass neither dependency and close neither M28 nor M29.
 
 ## Delivery boundary
 

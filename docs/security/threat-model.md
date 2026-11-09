@@ -2,8 +2,8 @@
 
 [Documentation index](../README.md) · [Repository entry](../../README.md)
 
-Version: 2 (Users protocol boundary, 2026-11-02)
-Status: unreleased Users protocol implementation; native authority, persistence,
+Version: 3 (Users and Groups protocol boundaries, 2026-11-10)
+Status: unreleased Users and Groups protocol implementation; native authority, persistence,
 transport and full-unit qualification remain unverified.
 Owner: go-scim maintainers. Review before release,
 and whenever the protocol surface, connection lifecycle, or trust boundary
@@ -11,7 +11,7 @@ changes.
 
 ## Scope and assets
 
-The implemented profile owns Users protocol behavior. The complete goal also
+The implemented profiles own Users and Groups protocol behavior. The complete goal also
 assigns it the public lifecycle of organization/provider-owned provisioning
 connections; that lifecycle is not implemented in this profile. It does not own HTTP
 transport deployment, tenant policy, organization mapping, persistence,
@@ -37,7 +37,11 @@ configured Authenticator; requests cannot select a principal or connection scope
 PATCH builds one candidate; Store owns its actual CAS/authority/uniqueness fence.
 Arbitrary commit failures remain unknown, never asserted to have rolled back.
 
-Groups, Bulk, credential writes and connection lifecycle are disabled. Native
+Groups have separate typed mapping/storage selection, bounded membership values,
+local User/Group references and immutable retained member metadata. The trusted
+GroupStore atomically validates exact member type/ID in the same connection;
+protocol URI validation never grants that authority. Bulk, credential writes
+and connection lifecycle remain disabled. Native
 identity/organization effects, token custody and durable replay/audit remain
 separate trusted-owner obligations. The table retains the complete goal's
 requirements; it is not a claim that every listed control exists here.
