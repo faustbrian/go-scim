@@ -1,15 +1,16 @@
-# Security planning
+# Security boundaries
 
-`go-scim` has no runtime implementation, importable package, or release.
-The [threat model](security/threat-model.md) is version 1 of the proposed
-security boundary; its controls are requirements for future implementation,
-not present safeguards. The [private reporting policy](../SECURITY.md) is
-active for this repository.
+The unreleased Users protocol profile has bounded decoding, schema validation,
+fail-closed credential-to-connection/authorization seams, typed redacted errors,
+ETag/CAS intent and an explicit atomic store contract. These are protocol controls,
+not evidence of real token validation, database persistence or provisioning.
+The [private reporting policy](../SECURITY.md) remains active.
 
-Release is blocked in `modules.json`. The future implementation must prove the
-relevant protocol and connection controls with hostile-input, authorization,
-isolation, redaction, resource-bound, cancellation, replay, and partial-failure
-tests, along with selected security checks and a per-module release verdict.
-The threat model and risk decisions must be revised when the API, integration,
-or trust boundary changes. Planning metadata and structural checks alone do
-not satisfy those gates.
+The [threat model](security/threat-model.md) separates implemented protocol
+boundaries from remaining owner obligations. Trusted test doubles do not verify
+production authentication, current authority fencing, durable admission/replay,
+audit, native organization mapping, connection lifecycle or HTTP ingress controls.
+
+Release remains blocked by parent-owned metadata and qualification. Independent
+review, interoperability, concrete adapters, selected security checks and a
+per-module verdict are still required before a release or full-unit claim.

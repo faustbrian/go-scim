@@ -1,65 +1,107 @@
 # go-scim
 
-> **Status: planned.** This repository does not currently provide an
-> installable package, a released version, or a runtime API.
+Storage-neutral, HTTP-independent SCIM 2.0 **Users protocol profile**, targeting
+Go 1.27. This is an unreleased implementation, not a turnkey provisioning backend,
+verified release, native adapter, or completion of the wider SCIM unit.
 
-`go-scim` reserves the planned Golib boundary for SCIM 2.0 discovery, Users
-and Groups, search, filtering, sorting, pagination, PATCH, Bulk, ETags, typed
-protocol errors, and organization/provider-owned connection lifecycle. The
-plan keeps protocol behavior separate from organization mapping, persistence,
-identity provider integration, and user interfaces.
+## Selected profile
 
-## Planned responsibility
+`NewUsersService(Config)` constructs one immutable runtime/discovery snapshot.
+`UsersService.Execute(context.Context, Request)` authenticates an opaque bearer,
+authorizes the resulting organization/provider connection, and executes:
 
-The future root package is intended to own SCIM protocol resources and
-operations, service-provider discovery, request and response validation,
-protocol error representation, and connection bearer issuance, rotation, and
-revocation. Its contracts remain proposals until they are implemented,
-reviewed, verified, and released.
+- ServiceProviderConfig, Schema and ResourceType document/collection discovery;
+- User create, get, replace, atomic PATCH and delete followed by absence;
+- deterministic, bounded GET-list and POST-search at the protocol operations
+  corresponding to `.search` and `Users/.search`;
+- typed, redacted RFC Error envelopes, strong opaque ETags and required exact
+  `If-Match` preconditions for replace, PATCH and delete.
 
-## Non-goals
+The fixed User schema supports `userName`, `name` (formatted, familyName,
+givenName, middleName, honorificPrefix and honorificSuffix), `displayName`,
+`active` and `emails` (value, type, primary and display), plus common `schemas`,
+`externalId`, server `id` and `meta`. Other optional core User attributes are not
+part of this selected schema and are rejected, not silently discarded.
+Configured optional extensions are published with their exact schema descriptors.
 
-The planned root boundary does not own:
+Core usernames retain their original spelling and IDs while comparison uses
+the versioned RFC 8265 UsernameCaseMapped/Unicode 17 profile. Stores must use
+`UsernameComparisonKey` and `UsernameComparisonProfile` for scoped atomic
+uniqueness; see the profile's preparation and index-upgrade contract below.
 
-- organization-specific attribute mapping or persistence adapters;
-- single sign-on or personal and otherwise unowned SCIM connections;
-- outbound vendor-directory connectors or administration interfaces; or
-- database clients, migrations, transactions, caches, or background workers.
+Groups, Bulk, password/credential writes and connection lifecycle operations are
+not implemented. Groups are absent from ResourceTypes; ServiceProviderConfig
+advertises Bulk and change-password as unsupported. Every password or
+`returned: never` write is rejected at `DecideCredentialWrite` before mapping or
+store admission. Reading, filtering, sorting or explicitly projecting those
+attributes fails without revealing whether they exist.
 
-Those concerns may become separate modules or compose existing Golib packages.
-Their presence in planning material does not make them available here.
+The profile follows [RFC 7643](https://www.rfc-editor.org/rfc/rfc7643) and
+[RFC 7644](https://www.rfc-editor.org/rfc/rfc7644) for the declared surface. It
+makes no independent-client interoperability or full-conformance claim.
 
-## Lifecycle and ownership
+## Composition and authority
 
-Implementation, hardening, and release have not started. The current module
-declaration exists only so repository tooling can validate the planned
-identity, family, ownership, and lifecycle metadata. It is explicitly
-non-releasable; release remains blocked until implementation and security
-evidence exist.
+Supply concurrency-safe `Authenticator`, `Authorizer`, `Mapper` and `Store`
+implementations. A request carries a credential, not an arbitrary principal,
+connection, tenant, organization, permission Boolean or command ID.
 
-The plan requires caller-owned configuration and runtime resources, copied
-mutable inputs, context-bounded external operations, and no package-owned
-background work. These are design constraints, not claims about released
-behavior.
+```go
+func CreateUser(ctx context.Context, service *scim.UsersService,
+    credential authentication.BearerCredential) (scim.Response, error) {
+    return service.Execute(ctx, scim.Request{
+        Operation: scim.UserCreate,
+        Credential: credential,
+        ContentType: "application/scim+json",
+        Body: []byte(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"bjensen"}`),
+    })
+}
+```
 
-## Planning and verification
+This function assumes an already composed service with real authority and storage;
+it does not provide those dependencies. The tests explicitly use trusted,
+process-local boundary doubles. They are not production adapters or evidence of
+identity, organization, token validation, database persistence or provisioning.
 
-The [repository goal](docs/goal.md) and `modules.json` record the planning scope
-and schema-v2 engineering inventory. Planned lifecycle state excludes this
-module from installable and released consumer catalogs. The local
-`make cohesion` target validates that boundary with the exact checksum-pinned
-`go-library-tools` v1.4.0 release declared in `.golib.yaml`.
+- **Authenticator** verifies a credential against current connection/token
+  authority, including digest, expiry, revocation and tenant/org/provider scope.
+  It preserves original read-began/valid-until metadata across cached copies and
+  retries. Protected calls and disclosure expire at the earliest contributing
+  authority/token deadline, never beyond twenty seconds from original read start.
+- **Authorizer** evaluates current policy for that verified connection and exact
+  operation/target. Errors, cancellation and panics deny without diagnostics.
+- **Mapper** is a pure representation policy. It cannot persist, provision, grant
+  memberships or take over accounts based on `externalId`.
+- **Store** owns the single existing durable command/admission authority, scoped
+  snapshots, atomic current-authority/ETag/uniqueness fencing, projection effects,
+  audit attribution, replay and outcome recovery. `Prepare` returns detached
+  state, never a held lock, transaction or callback engine. `Commit` must make
+  the promised effects atomic. The protocol module provides no journal or
+  successful-persistence substitute.
 
-[Security planning](docs/security.md) identifies the intended trust boundaries
-and release prerequisites. Report suspected vulnerabilities through the
-[private reporting process](SECURITY.md), not a public issue.
+See the full Go documentation on `Store` and the
+[profile decisions and limits](docs/users-profile.md) before implementing an
+adapter. Do not infer database correctness from protocol tests.
 
-Passing repository checks proves only that the planning scaffold and metadata
-are internally consistent. It does not prove any SCIM behavior or API.
+## Transport and integration
 
-See the versioned [Golib ecosystem index](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md)
-and [package-family guidance](https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/design-language.md#package-families-and-selection)
-for the shared design language.
+`Request`/`Response` do not depend on `net/http`. Transport composition owns actual
+routes, raw/decoded streaming limits, TLS, header parsing, deadlines and writing
+`*Error` with its `StatusCode()` and `application/scim+json`. It must expose no
+Groups/Bulk/connection-management routes for this profile. No HTTP server,
+background goroutine, environment lookup, database, network client or global
+registration is started by this package.
+
+Root SCIM consumes identity and organization types; it does not depend on all
+SSO implementations. Native `scim/organization` mapping and `scim/postgres`
+persistence remain separate units. The latter additionally depends on the former;
+this protocol profile does not unlock or verify that adapter. The full platform
+scope remains 67 units, and this profile alone does not close M28.
+
+[Security boundaries](docs/security.md), the [repository goal](docs/goal.md), and
+[private vulnerability reporting](SECURITY.md) describe the remaining integration
+and qualification boundaries. Parent-owned inventory and release state are not
+changed by this implementation.
 
 ## License
 

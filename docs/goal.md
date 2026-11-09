@@ -1,35 +1,42 @@
-# Goal: planned go-scim boundary
+# Goal: SCIM Users protocol-service profile
 
-Status: planned
+The current implementation assignment supersedes the earlier planning-only
+exclusion of source/runtime APIs for one finite, storage-neutral Users profile.
+It does not make the module released, fully verified, durably provisioned or
+complete the wider SCIM/identity platform goal.
 
-The coordination plan identifies `github.com/faustbrian/go-scim` as the future
-owner of SCIM 2.0 discovery, Users and Groups, search, filtering, sorting,
-pagination, PATCH, Bulk, ETags, typed protocol errors, and
-organization/provider-owned connection lifecycle.
+## Current assignment
 
-The source planning record is `.ai/identity-platform/goals/scim.md` in the
-Golib coordination tree, with SHA-256
-`f1265e043145851798a3cff7cffd34d1226e94100fee3101dcf2bf2c1e8d9eb8`.
-That record contains proposed contracts; it is not implementation evidence.
+Implement accurate Users-profile discovery, authenticated/authorized
+connection-scoped User create/get/replace/PATCH/list/search/delete and subsequent
+absence through `UsersService.Execute`. Preserve schema and returned/mutability
+rules, required ETags, bounded deterministic queries, atomic PATCH intent and
+redacted typed RFC errors. Disabled Groups, Bulk and password changes must not
+be advertised or silently accepted.
 
-## Current planning acceptance
+[Profile decisions](users-profile.md) document the exact supported schema,
+configuration and store/authority obligations. Boundary doubles prove protocol
+behavior only, not real identity/organization authority, connection bearer
+validation, database transactions, durable replay or provisioning effects.
 
-- Keep this repository visibly planned and absent from installable consumer
-  catalogs, with `releasable: false` and release delivery blocked.
-- Record the frozen Protocols and Descriptions family, secondary capabilities,
-  ownership, and delivery lifecycle in schema-v2 engineering metadata.
-- Maintain a versioned SCIM threat model and private vulnerability reporting
-  process without representing planned controls as implemented safeguards.
-- Validate the metadata locally and in hosted CI with immutable,
-  checksum-verified `go-library-tools` v1.4.0 tooling.
-- Do not claim a public package identifier, installation path, runtime API,
-  compatibility promise, protocol conformance, or released behavior.
+## Full goal retained
 
-## Deferred implementation
+The complete SCIM goal remains the preserved coordination specification at
+`.ai/identity-platform/goals/scim.md`, interpreted under the latest active
+identity implementation goal rather than retired validator procedures. It
+retains Users/Groups, filters, sorting, pagination, PATCH, Bulk, connection
+lifecycle, independent-client conformance and final release qualification.
 
-Source packages, nested modules, dependencies, API contracts, RFC 7643 and RFC
-7644 behavior, hardening evidence, compatibility commitments, tags, and
-releases remain outside this planning-only goal. They require separately
-authorized work and their own executable acceptance evidence. Before a release,
-the proposed trust boundaries need implemented controls, focused hostile-input
-and lifecycle evidence, security gate results, and a per-module verdict.
+The full platform denominator remains 67 units. Root SCIM depends on committed
+identity/organization contracts, not completion of every SSO protocol.
+`scim/organization` mapping is separately owned and additionally depends on SSO
+synchronization authority. `scim/postgres` separately depends on that mapper;
+this protocol profile does not bypass that dependency or close M28.
+
+## Delivery boundary
+
+Root inventory, registration, workspace/tool/CI changes, native adapters,
+independent final review, integration and Git delivery are parent-owned. Existing
+planning/release metadata is not changed here. Runtime source, passing protocol
+tests or a future registration change must not be described as whole-unit
+verification, installable released behavior or durable consumer provisioning.

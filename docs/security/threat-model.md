@@ -1,21 +1,23 @@
 # SCIM threat model
 
-Version: 1 (planning baseline, 2026-09-24)
-Status: proposed; no runtime control is implemented or verified here.
-Owner: go-scim maintainers. Review before the first implementation or release,
+Version: 2 (Users protocol boundary, 2026-11-02)
+Status: unreleased Users protocol implementation; native authority, persistence,
+transport and full-unit qualification remain unverified.
+Owner: go-scim maintainers. Review before release,
 and whenever the protocol surface, connection lifecycle, or trust boundary
 changes.
 
 ## Scope and assets
 
-The proposed library owns SCIM 2.0 protocol resources and the public lifecycle
-of organization/provider-owned provisioning connections. It does not own HTTP
+The implemented profile owns Users protocol behavior. The complete goal also
+assigns it the public lifecycle of organization/provider-owned provisioning
+connections; that lifecycle is not implemented in this profile. It does not own HTTP
 transport deployment, tenant policy, organization mapping, persistence,
 identity-provider clients, user interfaces, or database transactions. Adapters
 and applications remain responsible for those boundaries, but a core API must
 make their security obligations explicit and fail closed when they are absent.
 
-Assets include bearer credentials and their digests, tenant/organization and
+Full-goal assets include bearer credentials and their digests, tenant/organization and
 provider identifiers, Users and Groups, memberships, external IDs, bulk
 checkpoints, resource versions, audit events, and operational metadata.
 Attackers may control requests, headers, bearer tokens, resource attributes,
@@ -23,6 +25,20 @@ filter and PATCH paths, Bulk references and order, pagination/sort parameters,
 provider responses, callback results, and replay timing. A malicious or
 compromised dependency, CI action, release artifact, or maintainer credential
 is a separate supply-chain threat.
+
+## Implemented boundary and remaining owners
+
+The protocol service rejects ambiguous JSON before authorization/mapping/store
+access, bounds expressions/resources, validates declared schema policies and
+returns no partial result on budget failure. Raw credentials must pass the
+configured Authenticator; requests cannot select a principal or connection scope.
+PATCH builds one candidate; Store owns its actual CAS/authority/uniqueness fence.
+Arbitrary commit failures remain unknown, never asserted to have rolled back.
+
+Groups, Bulk, credential writes and connection lifecycle are disabled. Native
+identity/organization effects, token custody and durable replay/audit remain
+separate trusted-owner obligations. The table retains the complete goal's
+requirements; it is not a claim that every listed control exists here.
 
 ## Trust boundaries and required controls
 
@@ -47,9 +63,10 @@ and symlink-escape controls. Custom cryptography is out of scope.
 
 ## Decisions and residual risk
 
-No runtime risk is accepted by this planning document. The absence of source,
-tests, scanner results, and deployment evidence means every proposed control
-is unverified. The repository owner keeps release blocked until the affected
+No runtime risk is accepted by this document. Protocol tests use trusted
+boundary doubles and do not establish real authority, durable atomicity or
+provisioning. Scanner, interoperability and deployment evidence are not supplied
+by that test fixture. Remaining full-goal controls stay unverified. The repository owner keeps release blocked until the affected
 implementation has focused hostile-input and failure-path tests, selected
 security scans, review of data exposure surfaces, and an explicit per-module
 verdict. Any future accepted risk must record its owner, rationale, mitigation,

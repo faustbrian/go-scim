@@ -1,0 +1,49 @@
+# Changelog
+
+## Unreleased
+
+### Fixed
+
+- Apply primary validation, defaults, sorting and PATCH reassignment consistently
+  to configured descriptor spellings, retaining canonical keys and omitted/false
+  siblings without creating aliases or persisted comparison defaults.
+- Compare omitted and explicit-false `primary` consistently in multi-valued
+  element sets: reject supplied equivalents and retain original representation,
+  version and modification time for existing-member PATCH additions and replay.
+- Preserve valid username substring and empty-fragment predicates without
+  weakening full RFC 8265 username admission or scoped uniqueness.
+- Apply the full pinned RFC 8265 UsernameCaseMapped/Unicode 17 comparison policy
+  to core usernames without rewriting source names or IDs. Expose a shared
+  versioned uniqueness-key contract for Stores; existing indexes require
+  explicit collision reconciliation and migration to adopt this policy.
+- Compare empty strings lexically in relational filters while preserving
+  sorting's unassigned placement and stable resource-ID tie-break.
+- Treat omitted multi-valued `primary` as false in queries and PATCH selectors
+  without fabricating missing collections or persisting client-unsupplied data.
+- Validate PATCH operands before semantic equality or set-key construction,
+  including bounded exact decimals outside the finite float64 range. Preserve
+  partial immutable complex updates and Store-owned read-only descendants.
+- Return supplied request-only attributes on write and replay responses, and
+  retain minimum ancestors of always-returned descendants in projections.
+- Reject binary ordering filters and missing logical-operator gaps; bound
+  projection path counts before allocating split slots.
+- Preserve complex PATCH siblings and immutable descendants; freeze selection
+  before primary reassignment and reject ambiguous pathless aliases.
+- Enforce snapshot/PATCH/output budgets before materialization and redact late
+  state-dependent errors without changing actual commit outcomes.
+- Canonicalize stored projection names, enforce binary/reference representations,
+  compare schema-equivalent set/immutable values, and retain no-op timestamps.
+
+### Added
+
+- A storage-neutral SCIM 2.0 Users protocol-service profile with authenticated,
+  authorized organization/provider scope, accurate discovery, create/read/replace,
+  atomic PATCH intent, bounded deterministic list/search and delete/absence.
+- Strong opaque ETags, mandatory mutation preconditions, typed redacted errors,
+  schema/returned/mutability enforcement and explicit atomic store/replay contracts.
+- Required original-read authority metadata with an exclusive twenty-second
+  maximum, earliest contributing/token expiry and remaining-budget contexts;
+  cached observations and retries cannot renew freshness. Expired responses are
+  withheld without claiming rollback of a previously valid commit.
+- Explicit rejection of disabled Groups, Bulk and password writes. Durable
+  provisioning, connection lifecycle and native adapters remain separate work.
