@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Complete the Linux/amd64 native dependency manifest and verified checksums
+  without changing selected dependency versions.
 - Preserve complete admitted usernames without PostgreSQL B-tree size failures;
   checked digest lookups retain exact canonical equality, with creates serialized
   through their existing connection row.
