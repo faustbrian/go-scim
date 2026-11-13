@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- Accept the durable Store's original server command on fresh admission instead
+  of requiring the protocol's unused proposal. Scope, operation, target,
+  precondition, canonical request and lookup key remain exact; fresh connection
+  observations cannot be substituted or renewed. This permits composition with
+  the existing kernel idempotency allocator without another command journal.
+- Accept optional retained server-only creation metadata from durable admission
+  so keyed concurrent/recovery attempts preserve one original resource identity,
+  version and timestamps. Validate it before mapping and keep the exact committed
+  resource check; existing Stores without this selection retain their behavior.
+
 - Apply primary validation, defaults, sorting and PATCH reassignment consistently
   to configured descriptor spellings, retaining canonical keys and omitted/false
   siblings without creating aliases or persisted comparison defaults.

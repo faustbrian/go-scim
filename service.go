@@ -1,6 +1,7 @@
 package scim
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -428,10 +429,13 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 	if e != nil {
 		return Response{}, storeError(e)
 	}
-	// Keep the original admission identity, including replay, and reject malformed
-	// backend substitutions before using a current snapshot or invoking mapping.
+	// The durable admission owner may select its original command instead of
+	// this call's proposal, including on a first keyed admission. It cannot
+	// substitute the request's scope or intent to obtain that permission.
 	_, commandErr := identity.ParseCommandID(string(prepared.Intent.CommandID))
-	if commandErr != nil || prepared.Replay == nil && prepared.Intent.CommandID != intent.CommandID || prepared.Intent.Scope != intent.Scope || prepared.Intent.Operation != intent.Operation || prepared.Intent.ResourceID != intent.ResourceID || prepared.Intent.IfMatch != intent.IfMatch || string(prepared.Intent.CanonicalRequest) != string(intent.CanonicalRequest) {
+	sameTarget := prepared.Intent.Scope == intent.Scope && prepared.Intent.Operation == intent.Operation && prepared.Intent.ResourceID == intent.ResourceID && prepared.Intent.IfMatch == intent.IfMatch
+	sameRequest := sameTarget && prepared.Intent.IdempotencyKey == intent.IdempotencyKey && bytes.Equal(prepared.Intent.CanonicalRequest, intent.CanonicalRequest)
+	if commandErr != nil || !sameRequest {
 		return Response{}, failure(503, "")
 	}
 	if prepared.Replay != nil {
@@ -461,6 +465,21 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 		}
 	}()
 	current := prepared.Current
+	if prepared.CreateMetadata != nil {
+		metadata := *prepared.CreateMetadata
+		// Response dates and persisted equality use UTC serialization. Normalize
+		// before bounds checks so a local offset cannot cross the wire year bound
+		// or defer an invalid timezone error until after the commit.
+		metadata.CreatedAt = metadata.CreatedAt.UTC()
+		metadata.LastModified = metadata.LastModified.UTC()
+		validDates := !metadata.CreatedAt.IsZero() && !metadata.LastModified.Before(metadata.CreatedAt) && metadata.CreatedAt.Year() >= 1 && metadata.CreatedAt.Year() <= 9999 && metadata.LastModified.Year() >= 1 && metadata.LastModified.Year() <= 9999
+		if r.Operation != s.profile.create || !safeID(metadata.ID) || !validVersion(metadata.Version) || !validDates {
+			return Response{}, failure(503, "")
+		}
+		// Snapshot the admitted server fields before invoking mapping policy.
+		// Neither mapping nor a later clock observation may regenerate them.
+		prepared.CreateMetadata = &metadata
+	}
 	if r.Operation != s.profile.create {
 		if current == nil {
 			return Response{}, failure(404, "")
@@ -541,26 +560,30 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 		if current != nil {
 			mapped = s.preserveReadOnly(*current, mapped)
 		}
-		now := s.config.Now()
-		id := r.ResourceID
-		created := now
-		if current == nil {
-			newID, e := identity.NewSubjectID()
+		metadata := prepared.CreateMetadata
+		if metadata == nil {
+			now := s.config.Now()
+			id := r.ResourceID
+			created := now
+			if current == nil {
+				newID, e := identity.NewSubjectID()
+				if e != nil {
+					return Response{}, failure(503, "")
+				}
+				id = identity.FormatSubjectID(newID)
+			} else {
+				created = current.CreatedAt
+				if now.Before(current.LastModified) {
+					now = current.LastModified
+				}
+			}
+			version, e := identity.NewCommandID()
 			if e != nil {
 				return Response{}, failure(503, "")
 			}
-			id = identity.FormatSubjectID(newID)
-		} else {
-			created = current.CreatedAt
-			if now.Before(current.LastModified) {
-				now = current.LastModified
-			}
+			metadata = &CreateMetadata{ID: id, Version: Version(`"` + string(version) + `"`), CreatedAt: created, LastModified: now}
 		}
-		version, e := identity.NewCommandID()
-		if e != nil {
-			return Response{}, failure(503, "")
-		}
-		resource := Resource{ID: id, Version: Version(`"` + string(version) + `"`), CreatedAt: created, LastModified: now, Schemas: append([]string(nil), mapped.Schemas...), ExternalID: mapped.ExternalID, Attributes: cloneMap(mapped.Attributes)}
+		resource := Resource{ID: metadata.ID, Version: metadata.Version, CreatedAt: metadata.CreatedAt, LastModified: metadata.LastModified, Schemas: append([]string(nil), mapped.Schemas...), ExternalID: mapped.ExternalID, Attributes: cloneMap(mapped.Attributes)}
 		if r.Operation == s.profile.patch && current != nil && s.sameProjection(*current, mapped) {
 			resource = cloneResource(*current)
 		}

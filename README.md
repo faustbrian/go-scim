@@ -4,6 +4,31 @@ Storage-neutral, HTTP-independent SCIM 2.0 **Users and Groups protocol profiles*
 Go 1.27. This is an unreleased implementation, not a turnkey provisioning backend,
 verified release, native adapter, or completion of the wider SCIM unit.
 
+## Durable command admission
+
+The service proposes a random `WriteIntent.CommandID`, but `Store.Prepare` owns
+the authoritative original command used by both fresh execution and replay.
+A durable request-key owner may allocate a different valid server command;
+the protocol carries that returned ID into Commit/Abort rather than requiring
+an alias or second journal. The request cannot choose either server identity.
+Prepared admission must echo the exact scope, operation, target, precondition,
+canonical request and current lookup key. For a recovered headerless DELETE,
+the current lookup key may differ from the original command's absent header;
+it is correlation, not a replacement command. Fresh connection evidence must
+retain its original fields and validity deadline. Malformed or substituted
+admission denies before mapping, mutation or unsafe cleanup. This is protocol
+composition support, not proof of a native provisioning implementation.
+
+Durable admission may also supply `PreparedWrite.CreateMetadata` with the
+original server ID, strong version and creation/modification timestamps. It is
+validated and copied before mapping, with timestamps normalized to UTC without
+changing their instants. UTC years must be 1 through 9999. It is used only for
+fresh create and never
+accepted in client JSON. All writable attributes still come through the same
+schema and mapping pipeline. Nil retains legacy metadata generation; replay
+uses its original committed result. The exact final resource comparison is
+unchanged: a Store cannot replace the attempted resource after mutation.
+
 ## Selected profile
 
 `NewUsersService(Config)` constructs one immutable runtime/discovery snapshot.
