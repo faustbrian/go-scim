@@ -33,6 +33,21 @@ configuration and store/authority obligations. Boundary doubles prove protocol
 behavior only, not real identity/organization authority, connection bearer
 validation, database transactions, durable replay or provisioning effects.
 
+## Selected native configured Users profile
+
+The optional [PostgreSQL module](../postgres/README.md) supplies one configured
+active User create and scoped read path. It owns its connection/resource
+projections, not identity tables, transaction outcomes or replacement authority.
+Install its forward schema together with the genuine identity, organization,
+authorization, audit and outbox owners. Native create keeps the kernel user,
+projection, command result, audit and outbox effects atomic. Headerless creates
+remain supported; optional keyed retries preserve original server metadata.
+
+This selected profile does not advertise discovery, listing, User mutation or
+deletion, Groups, Bulk, organization reconciliation, SSO synchronization or
+HTTP routes. Its trusted create-only configured bootstrap is not the public
+connection-management lifecycle. Those remain required full-goal work.
+
 ## Full goal retained
 
 The complete SCIM goal remains the preserved coordination specification at

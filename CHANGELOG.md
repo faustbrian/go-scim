@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Run hosted verification on Go 1.27.4, matching the tested native adapter
+  toolchain while preserving the public modules' Go 1.27.0 minimum.
+
 - Accept the durable Store's original server command on fresh admission instead
   of requiring the protocol's unused proposal. Scope, operation, target,
   precondition, canonical request and lookup key remain exact; fresh connection
@@ -45,6 +48,12 @@
   compare schema-equivalent set/immutable values, and retain no-op timestamps.
 
 ### Added
+
+- Add an optional PostgreSQL module for configured active SCIM User creation
+  and scoped reads using the existing identity coordinator and current primary
+  authority owners. Native user/projection, result, audit and outbox effects
+  share one transaction. Other protocol and connection-management operations
+  remain unselected; install the documented owner histories before activation.
 
 - Opt-in combined root search through one explicit scoped User/Group snapshot
   owner, with schema-aware filtering, sorting, projection and exact bounded

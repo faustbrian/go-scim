@@ -23,3 +23,16 @@ operations:
         fuzz: FuzzUsersCorrectionOperands
         budget: 10s
         timeout: 60s
+  - module: postgres
+    gate: fuzz
+    steps:
+      - type: go-test
+        packages: [.]
+        fuzz: FuzzConfiguredCredentialBounds
+        budget: 3s
+        timeout: 60s
+      - type: go-test
+        packages: [.]
+        fuzz: FuzzOriginalMetadataEnvelope
+        budget: 3s
+        timeout: 60s

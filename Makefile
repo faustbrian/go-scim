@@ -1,6 +1,6 @@
 GOLIB ?= golib
 
-.PHONY: check check-full ci fast-check planning-check check-online cohesion inventory repository-check runtime-check
+.PHONY: check check-full ci fast-check planning-check check-online cohesion inventory repository-check runtime-check native-runtime-check
 
 # Standalone routes retain the unconditional whole-tree secret scan.
 check ci fast-check:
@@ -11,6 +11,11 @@ check ci fast-check:
 runtime-check:
 	go test -race -count=1 -timeout=120s ./...
 	go vet ./...
+
+native-runtime-check:
+	cd postgres && go test -mod=readonly -race -count=1 -timeout=120s ./...
+	cd postgres && go vet -mod=readonly -tags=integration ./...
+	cd postgres && go mod verify
 
 # CI selects its immutable changed-content secret scan separately.
 planning-check:

@@ -83,6 +83,8 @@ jobs:
         run: golib docs check --local
       - name: Verify Users protocol behavior
         run: make runtime-check
+      - name: Verify native adapter contracts
+        run: make native-runtime-check
       - name: Scan secrets unconditionally
         env:
           EVENT_NAME: ${{ github.event_name }}

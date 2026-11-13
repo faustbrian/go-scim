@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "repository": "github.com/faustbrian/go-scim",
-  "go_version": "1.27.2",
+  "go_version": "1.27.4",
   "modules": [
     {
       "directory": ".",
@@ -36,7 +36,9 @@
         "github.com/faustbrian/go-identity",
         "github.com/faustbrian/go-organization"
       ],
-      "reverse_owned_dependencies": [],
+      "reverse_owned_dependencies": [
+        "github.com/faustbrian/go-scim/postgres"
+      ],
       "external_runtime_dependencies": [],
       "required_services": [],
       "build_tags": [],
@@ -90,12 +92,16 @@
           "background_work": "none"
         },
         "optional_owned_dependencies": [],
-        "adapters": [],
+        "adapters": [
+          "github.com/faustbrian/go-scim/postgres"
+        ],
         "companions": [],
         "supported_go": {
           "minimum": "1.27.0",
           "tested": [
-            "1.27.2", "1.27.3"
+            "1.27.2",
+            "1.27.3",
+            "1.27.4"
           ]
         },
         "supported_platforms": [
@@ -116,6 +122,191 @@
           "faq": null,
           "changelog": "CHANGELOG.md",
           "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-scim",
+          "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"
+        },
+        "known_good_compatibility_sets": [],
+        "delivery": {
+          "implementation": "in-progress",
+          "hardening": "in-progress",
+          "release": "blocked"
+        }
+      },
+      "gates": {
+        "api_compatibility": false,
+        "benchmarks": false,
+        "conformance": false,
+        "coverage": false,
+        "documentation": true,
+        "fuzz": true,
+        "interoperability": false,
+        "lint": true,
+        "mutation": false,
+        "race": true,
+        "security": true,
+        "tests": true
+      }
+    },
+    {
+      "directory": "postgres",
+      "module_path": "github.com/faustbrian/go-scim/postgres",
+      "go_version": "1.27.0",
+      "packages": [
+        {
+          "module_directory": "postgres",
+          "directory": "postgres",
+          "name": "scimpostgres",
+          "import_path": "github.com/faustbrian/go-scim/postgres",
+          "kind": "public",
+          "production": true,
+          "executable": true,
+          "coverage_required": true,
+          "build_required": true,
+          "build_tags": []
+        }
+      ],
+      "purpose": "Experimental native configured SCIM User create/read using actual identity, organization, authorization, audit and outbox owners; complete provisioning and qualification remain unfinished.",
+      "lifecycle": "experimental",
+      "kind": "optional adapter",
+      "releasable": true,
+      "family": "protocols-and-descriptions",
+      "family_label": "Protocols And Descriptions",
+      "family_description": "Standards, envelopes, schemas, descriptions, signatures, and wire interoperability.",
+      "family_order": 3,
+      "version": "0.0.0",
+      "tag_prefix": "postgres/v",
+      "owned_dependencies": [
+        "github.com/faustbrian/go-audit",
+        "github.com/faustbrian/go-audit/postgres",
+        "github.com/faustbrian/go-authentication/v2",
+        "github.com/faustbrian/go-authorization/v3",
+        "github.com/faustbrian/go-capability/postgres/identity",
+        "github.com/faustbrian/go-capability/v2",
+        "github.com/faustbrian/go-clock",
+        "github.com/faustbrian/go-identifier/v2",
+        "github.com/faustbrian/go-identity",
+        "github.com/faustbrian/go-identity/delivery",
+        "github.com/faustbrian/go-identity/delivery/postgres",
+        "github.com/faustbrian/go-identity/email",
+        "github.com/faustbrian/go-identity/mfa",
+        "github.com/faustbrian/go-identity/mfa/postgres",
+        "github.com/faustbrian/go-identity/otp",
+        "github.com/faustbrian/go-identity/otp/postgres",
+        "github.com/faustbrian/go-identity/password",
+        "github.com/faustbrian/go-identity/password/postgres",
+        "github.com/faustbrian/go-identity/phone",
+        "github.com/faustbrian/go-identity/postgres",
+        "github.com/faustbrian/go-identity/risk",
+        "github.com/faustbrian/go-identity/risk/postgres",
+        "github.com/faustbrian/go-identity/session",
+        "github.com/faustbrian/go-identity/session/postgres",
+        "github.com/faustbrian/go-identity/username",
+        "github.com/faustbrian/go-migrations/v2",
+        "github.com/faustbrian/go-migrations/v3",
+        "github.com/faustbrian/go-organization",
+        "github.com/faustbrian/go-organization/postgres",
+        "github.com/faustbrian/go-password/v2",
+        "github.com/faustbrian/go-postgres",
+        "github.com/faustbrian/go-scim",
+        "github.com/faustbrian/go-secret-envelope/v2",
+        "github.com/faustbrian/go-transactional-outbox/postgres/identity",
+        "github.com/faustbrian/go-transactional-outbox/v2"
+      ],
+      "reverse_owned_dependencies": [],
+      "external_runtime_dependencies": [
+        "github.com/jackc/pgpassfile",
+        "github.com/jackc/pgservicefile",
+        "github.com/jackc/pgx/v5",
+        "github.com/jackc/puddle/v2",
+        "github.com/nyaruka/phonenumbers/v2",
+        "golang.org/x/crypto",
+        "golang.org/x/net",
+        "golang.org/x/sync",
+        "golang.org/x/text",
+        "google.golang.org/protobuf"
+      ],
+      "required_services": [
+        "postgresql"
+      ],
+      "build_tags": [],
+      "test_tags": [
+        "integration"
+      ],
+      "interoperability_tools": [],
+      "specifications": [],
+      "conformance_corpora": [],
+      "provenance": [],
+      "goal_files": [
+        "docs/goal.md"
+      ],
+      "goal_status": "in-progress",
+      "goal_evidence": [],
+      "cohesion": {
+        "family": "protocols-and-descriptions",
+        "secondary_capabilities": [
+          "data-encoding",
+          "http-and-service-edge",
+          "identity-and-access"
+        ],
+        "responsibility": "Execute configured SCIM User create/read through the existing identity Coordinator with real owner authority and atomic native projections.",
+        "non_goals": [
+          "Own a replacement identity engine, transaction coordinator, command journal or credential authority.",
+          "Claim connection management, User updates/deletion, Groups, Bulk, enterprise federation, organization mapping, HTTP composition or full SCIM qualification."
+        ],
+        "public_package_identifier": "scimpostgres",
+        "primary_entry_packages": [
+          "github.com/faustbrian/go-scim/postgres"
+        ],
+        "package_selection": {
+          "github.com/faustbrian/go-scim/postgres": "Optional native configured active User create and scoped read; install actual owner migrations before startup."
+        },
+        "lifecycle_status": "active",
+        "maturity": "experimental",
+        "construction_styles": [
+          "new-config",
+          "plain-function",
+          "validated-value"
+        ],
+        "lifecycle_styles": [
+          "stateless"
+        ],
+        "ownership": {
+          "configuration": "caller",
+          "mutable_inputs": [
+            "borrow",
+            "copy"
+          ],
+          "runtime_resources": "caller",
+          "background_work": "none"
+        },
+        "optional_owned_dependencies": [],
+        "adapters": [],
+        "companions": [],
+        "supported_go": {
+          "minimum": "1.27.0",
+          "tested": [
+            "1.27.4"
+          ]
+        },
+        "supported_platforms": [
+          "portable-go"
+        ],
+        "supported_backends": [
+          "postgresql"
+        ],
+        "supported_protocols": [
+          "scim-users"
+        ],
+        "documentation": {
+          "readme": "postgres/README.md",
+          "api": "postgres/README.md",
+          "adoption": "postgres/README.md",
+          "security": "postgres/README.md",
+          "compatibility": null,
+          "performance": null,
+          "examples": "postgres/README.md",
+          "faq": null,
+          "changelog": "postgres/CHANGELOG.md",
+          "pkg_go_dev": "https://pkg.go.dev/github.com/faustbrian/go-scim/postgres",
           "ecosystem_index": "https://github.com/faustbrian/go-library-tools/blob/v1.4.0/docs/ecosystem/README.md"
         },
         "known_good_compatibility_sets": [],
