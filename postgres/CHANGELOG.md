@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add authorized native discovery and complete scoped Users CRUD, filtering,
+  search and pagination over the existing protocol and PostgreSQL owners.
+  Install the forward Users metadata migration and the kernel status/canonical
+  request histories before activation. Updates use actual kernel attribute CAS;
+  no-op PATCH preserves versions/time, and canonical DELETE retains its original
+  empty response without deleting the global user. Core names/emails/active
+  remain SCIM projection data, not verified identifiers or global deprovisioning.
+- Preserve original uniqueness and ETag failures on exact retries, including
+  after later resource changes or deletion, through the existing kernel journal.
+
 - Complete the Linux/amd64 native dependency manifest and verified checksums
   without changing selected dependency versions.
 - Preserve complete admitted usernames without PostgreSQL B-tree size failures;

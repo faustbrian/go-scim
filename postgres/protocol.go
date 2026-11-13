@@ -33,18 +33,17 @@ type invocation struct {
 
 type protocolBridge struct{ service *Service }
 
-// Execute supports only active UserCreate and exact scoped UserGet. Unsupported
-// discovery/lifecycle/list/update/group operations return 501; this adapter does
-// not advertise capabilities its native owners cannot execute. A supplied
-// idempotency key selects scoped original replay; headerless creates use the
-// ordinary server-owned command without inventing a client key.
+// Execute runs the configured native Users protocol; Groups and Bulk return 501.
+// A supplied idempotency key selects scoped original replay. Headerless creates
+// use ordinary server-owned commands without inventing client keys; DELETE
+// always uses the existing kernel's canonical target/precondition custody.
 // Credentials/body remain borrowed for this call;
 // results are detached and all failures have stable redacted protocol errors.
 func (s *Service) Execute(ctx context.Context, r scim.Request) (response scim.Response, err error) {
 	if s == nil || s.protocol == nil || ctx == nil {
 		return response, scim.NewError(503, "")
 	}
-	if r.Operation != scim.UserCreate && r.Operation != scim.UserGet {
+	if !nativeOperation(r.Operation) {
 		return response, scim.NewError(501, "")
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.config().MaximumDuration)
@@ -143,10 +142,20 @@ func (s *Service) decide(ctx context.Context, operation, target, resourceType st
 
 func (b *protocolBridge) Authorize(ctx context.Context, c scim.Connection, op scim.Operation, target string) error {
 	i, err := currentInvocation(ctx)
-	if err != nil || c != i.connection || !liveConnection(ctx, c) || (op != scim.UserCreate && op != scim.UserGet) {
+	if err != nil || c != i.connection || !liveConnection(ctx, c) || !nativeOperation(op) {
 		return identity.ForbiddenError{}
 	}
 	return b.service.decide(ctx, string(op), target, "identity.scim.user")
+}
+
+func nativeOperation(op scim.Operation) bool {
+	switch op {
+	case scim.UserCreate, scim.UserGet, scim.UserReplace, scim.UserPatch, scim.UserDelete, scim.UserList, scim.UserSearch, scim.Search,
+		scim.ServiceProviderConfig, scim.SchemasList, scim.SchemaGet, scim.ResourceTypesList, scim.ResourceTypeGet:
+		return true
+	default:
+		return false
+	}
 }
 
 func (b *protocolBridge) MapUser(ctx context.Context, scope scim.Scope, r scim.WritableResource) (scim.WritableResource, error) {
@@ -157,18 +166,16 @@ func (b *protocolBridge) MapUser(ctx context.Context, scope scim.Scope, r scim.W
 	if len(r.Schemas) != 1 || r.Schemas[0] != "urn:ietf:params:scim:schemas:core:2.0:User" {
 		return scim.WritableResource{}, scim.NewError(400, "invalidValue")
 	}
-	for key, value := range r.Attributes {
-		switch key {
-		case "userName", "displayName":
-			text, ok := value.(string)
-			if !ok || len(text) > 4096 || key == "displayName" && b.service.config().DisplayNameField == "" {
-				return scim.WritableResource{}, scim.NewError(400, "invalidValue")
-			}
-		case "active":
-			if active, ok := value.(bool); !ok || !active {
-				return scim.WritableResource{}, scim.NewError(400, "invalidValue")
-			}
-		default:
+	// The root protocol already owns complete core-User schema validation and
+	// bounded complex/multivalue PATCH semantics. Only configured native scalar
+	// mappings add this adapter's field bound. Other attributes remain SCIM
+	// projection data: active is not global identity status, and emails/names
+	// never create verified identifiers or organization membership.
+	if _, err := mappedString(r.Attributes, "userName"); err != nil {
+		return scim.WritableResource{}, scim.NewError(400, "invalidValue")
+	}
+	if b.service.config().DisplayNameField != "" {
+		if _, err := mappedString(r.Attributes, "displayName"); err != nil {
 			return scim.WritableResource{}, scim.NewError(400, "invalidValue")
 		}
 	}
@@ -190,7 +197,7 @@ func (b *protocolBridge) Get(ctx context.Context, scope scim.Scope, id string) (
 	args := append(scopeArgs(scope), id)
 	var wire []byte
 	var user string
-	err = b.service.pool.Raw().QueryRow(ctx, `SELECT resource,user_id FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND octet_length(resource)<=131072`, args...).Scan(&wire, &user)
+	err = b.service.pool.Raw().QueryRow(ctx, `SELECT resource,user_id FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND deleted_at IS NULL AND octet_length(resource)<=131072`, args...).Scan(&wire, &user)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return scim.Resource{}, scim.ErrNotFound
 	}
@@ -212,8 +219,4 @@ func (b *protocolBridge) Get(ctx context.Context, scope scim.Scope, id string) (
 		return scim.Resource{}, err
 	}
 	return resource, nil
-}
-
-func (*protocolBridge) Snapshot(context.Context, scim.Scope, scim.SnapshotBudget) (scim.Snapshot, error) {
-	return scim.Snapshot{}, scim.NewError(501, "")
 }

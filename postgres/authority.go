@@ -45,7 +45,7 @@ func (s *Service) matchConnection(version, epoch, organizationCredential, creden
 
 func (p *nativePhase) requireConnection(ctx context.Context, w kernel.Work, original invocation) error {
 	c := p.service.config()
-	// This existing row owns create serialization: the following exact username
+	// This existing row owns projection-writer serialization: exact username
 	// check must observe the preceding writer's commit under Work's READ COMMITTED
 	// isolation. Get uses the separate unlocked current-authority read path.
 	rows, err := w.Query(ctx, `SELECT version::text,authority_version::text,organization_credential_version::text,credential_id,state,credential_digest,configuration_digest,expires_at FROM scim.connections WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 FOR UPDATE`, scopeArgs(c.Scope)...)

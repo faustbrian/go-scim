@@ -3,9 +3,10 @@
 Storage-neutral, HTTP-independent SCIM 2.0 **Users and Groups protocol profiles**, targeting
 Go 1.27. This is an unreleased implementation, not a turnkey provisioning backend,
 verified release, or completion of the wider SCIM unit. The optional
-[PostgreSQL adapter](postgres/README.md) separately selects configured active
-User creation and scoped reads through the actual identity and authority owners;
-it does not provide complete provisioning or the protocol's other operations.
+[PostgreSQL adapter](postgres/README.md) selects configured, authorized discovery
+and Users create/get/replace/PATCH/delete/list/search through the actual identity
+and authority owners. Groups, organization reconciliation, global deprovisioning
+and the native connection-management lifecycle remain separate work.
 
 ## Durable command admission
 

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Document the optional PostgreSQL adapter's configured discovery and complete
+  Users CRUD/PATCH/query profile, with organization and global deprovisioning
+  kept outside that selection. Root protocol APIs remain unchanged.
+
 - Allow trusted durable preparation to retain replace/PATCH version and
   modification time while preserving resource identity, creation time and
   no-op PATCH metadata. Nil selection preserves existing generation.

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"math"
 	"strconv"
 
 	"github.com/faustbrian/go-audit"
@@ -23,6 +25,7 @@ type nativePhase struct {
 	registry    *kernel.ContributorRegistry
 	command     identity.Command
 	creation    identity.CreateUserCommand
+	update      kernel.SCIMUserUpdateIntent
 	resource    scim.Resource
 	effect      [32]byte
 	intent      scim.WriteIntent
@@ -32,7 +35,7 @@ func (*nativePhase) Descriptor() kernel.ContributorDescriptor {
 	return kernel.ContributorDescriptor{Owner: "scim/postgres", ContractID: "identity.scim", Version: 1}
 }
 func (*nativePhase) FeatureOperations() []identity.FeatureOperation {
-	return []identity.FeatureOperation{userOperation(), connectionOperation()}
+	return []identity.FeatureOperation{userOperation(), connectionOperation(), mutationOperation(scim.UserReplace), mutationOperation(scim.UserPatch), mutationOperation(scim.UserDelete)}
 }
 func userOperation() identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "scim", OperationID: string(scim.UserCreate), SchemaID: "identity.scim.user-create.native-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
@@ -40,9 +43,19 @@ func userOperation() identity.FeatureOperation {
 func connectionOperation() identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "scim", OperationID: "identity.scim.connection-create", SchemaID: "identity.scim.connection-create.configured-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
 }
+func mutationOperation(op scim.Operation) identity.FeatureOperation {
+	operation := identity.FeatureOperation{Owner: "scim", OperationID: string(op), SchemaID: string(op) + ".native-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
+	if op == scim.UserPatch {
+		operation.VersionPolicy = identity.FeatureVersionSequentialOrUnchanged
+	}
+	return operation
+}
 func (p *nativePhase) operation() identity.FeatureOperation {
 	if p.bootstrap {
 		return connectionOperation()
+	}
+	if p.intent.Operation != "" && p.intent.Operation != scim.UserCreate {
+		return mutationOperation(p.intent.Operation)
 	}
 	return userOperation()
 }
@@ -59,7 +72,37 @@ func (p *nativePhase) eventType() string {
 	if p.bootstrap {
 		return "identity.scim.connection_created.v1"
 	}
+	switch p.intent.Operation {
+	case scim.UserReplace:
+		return "identity.scim.user_replaced.v1"
+	case scim.UserPatch:
+		if p.noOpPatch() {
+			return "identity.scim.user_patch_noop.v1"
+		}
+		return "identity.scim.user_patched.v1"
+	case scim.UserDelete:
+		return "identity.scim.user_deleted.v1"
+	}
 	return "identity.scim.user_created.v1"
+}
+
+func (p *nativePhase) noOpPatch() bool {
+	return p.intent.Operation == scim.UserPatch && p.original.Current != nil && p.resource.Version == p.original.Current.Version
+}
+
+func (p *nativePhase) lifecycle() kernel.LifecyclePlan {
+	if !nativeMutation(p.intent.Operation) {
+		return kernel.LifecyclePlan{EventType: p.eventType(), AfterVersion: 1}
+	}
+	if p.original.Generation < 1 || p.original.Generation == math.MaxInt64 && !p.noOpPatch() {
+		return kernel.LifecyclePlan{}
+	}
+	before := uint64(p.original.Generation)
+	after := before
+	if !p.noOpPatch() {
+		after++
+	}
+	return kernel.LifecyclePlan{EventType: p.eventType(), BeforeVersion: before, AfterVersion: after}
 }
 
 func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
@@ -83,14 +126,37 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 		return err
 	}
 	fields = append(fields, identity.FeatureField{Name: "scim.admission", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: admissionDigest[:]}})
-	if !p.bootstrap {
+	if nativeMutation(p.intent.Operation) {
+		// The original resource CAS and target-security observation are frozen in
+		// the existing preparation. Bind all of them to this exact kernel command;
+		// the current projection is neither a journal nor a replay authority.
+		original, marshalErr := json.Marshal(p.original)
+		if marshalErr != nil {
+			return identity.UnavailableError{}
+		}
+		digest := sha256.Sum256(original)
+		clear(original)
+		fields = append(fields, identity.FeatureField{Name: "scim.original", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: digest[:]}})
+		if p.intent.Operation != scim.UserDelete {
+			attributes, err := p.prepareChangedAttributes(ctx)
+			if err != nil {
+				return err
+			}
+			p.update = kernel.SCIMUserUpdateIntent{Binding: b, SchemaID: c.FieldSchema.ID, SchemaVersion: c.FieldSchema.Version, ExpectedVersion: p.original.KernelVersion, Attributes: attributes}
+			updateFields, err := kernel.SCIMUserUpdateFields(p.update, c.FieldSchema)
+			if err != nil {
+				return err
+			}
+			fields = append(fields, updateFields...)
+		}
+	} else if !p.bootstrap {
 		creationBinding := b
 		creationBinding.OperationID = "identity.user.create"
 		creationBinding.SchemaID = c.FieldSchema.ID
 		creationBinding.SchemaVersion = c.FieldSchema.Version
 		creationBinding.RecordID = ""
 		updates := []identity.AttributeUpdate{{Name: c.UserNameField, Value: identity.AttributeValue{Kind: identity.AttributeString, Scalar: identity.AttributeScalar{Kind: identity.AttributeString, String: p.resource.Attributes["userName"].(string)}}}}
-		if value, ok := p.resource.Attributes["displayName"].(string); ok {
+		if value, ok := p.resource.Attributes["displayName"].(string); ok && c.DisplayNameField != "" {
 			updates = append(updates, identity.AttributeUpdate{Name: c.DisplayNameField, Value: identity.AttributeValue{Kind: identity.AttributeString, Scalar: identity.AttributeScalar{Kind: identity.AttributeString, String: value}}})
 		}
 		prepared, err := c.Fields.Prepare(ctx, identity.AttributePrepareRequest{TenantID: b.TenantID, UserID: b.UserID, SchemaVersion: c.FieldSchema.Version, Updates: updates, Context: p.service.caller("identity.user.create", id, "identity.user")})
@@ -123,8 +189,16 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 }
 
 func (p *nativePhase) ValidateFeatureCommand(command identity.Command, plan kernel.CommandPlan) error {
-	if p == nil || p.service == nil || command != p.command || command == (identity.Command{}) || plan.Feature == nil || *plan.Feature != p.registration() || plan.SubjectType != p.subjectType() || plan.Lifecycle == nil || *plan.Lifecycle != (kernel.LifecyclePlan{EventType: p.eventType(), AfterVersion: 1}) || len(plan.Audits) != 1 || plan.Audits[0].EventType != p.operation().OperationID {
+	if p == nil || p.service == nil || command != p.command || command == (identity.Command{}) || plan.Feature == nil || *plan.Feature != p.registration() || plan.SubjectType != p.subjectType() || plan.Lifecycle == nil || *plan.Lifecycle != p.lifecycle() || len(plan.Audits) != 1 || plan.Audits[0].EventType != p.operation().OperationID {
 		return identity.InvalidInputError{Field: "scim_command"}
+	}
+	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
+		expected := kernel.SCIMUserUpdatePlan{Required: len(p.update.Attributes) > 0, ExpectedVersion: p.update.ExpectedVersion}
+		if plan.SCIMUserUpdate == nil || *plan.SCIMUserUpdate != expected {
+			return identity.InvalidInputError{Field: "scim_update_plan"}
+		}
+	} else if plan.SCIMUserUpdate != nil {
+		return identity.InvalidInputError{Field: "scim_update_plan"}
 	}
 	return nil
 }
@@ -146,6 +220,33 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		if count != 1 {
 			return identity.FeatureReceipt{}, identity.ConflictError{}
 		}
+	} else if nativeMutation(p.intent.Operation) {
+		if err := p.requireOriginalProjection(ctx, w); err != nil {
+			return identity.FeatureReceipt{}, err
+		}
+		if p.intent.Operation != scim.UserDelete {
+			username, err := scim.UsernameComparisonKey(p.resource.Attributes["userName"].(string))
+			if err != nil {
+				return identity.FeatureReceipt{}, identity.InvalidInputError{Field: "scim_username"}
+			}
+			if err := p.requireAvailableUsername(ctx, w, username, sha256.Sum256([]byte(username))); err != nil {
+				return identity.FeatureReceipt{}, err
+			}
+			if len(p.update.Attributes) > 0 {
+				if _, err := p.service.updates.Apply(ctx, w, p, command, p.update); err != nil {
+					var conflict identity.ConflictError
+					if errors.As(err, &conflict) {
+						return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, kernel.FeatureFailurePrecondition)
+					}
+					return identity.FeatureReceipt{}, err
+				}
+				observed, err := w.SCIMUserUpdate(p)
+				if err != nil || observed.ID != p.update.Binding.UserID || observed.TenantID != p.update.Binding.TenantID || observed.Status != identity.StatusActive || observed.Version != p.update.ExpectedVersion+1 {
+					return identity.FeatureReceipt{}, identity.UnavailableError{}
+				}
+			}
+		}
+		return p.applyProjectionMutation(ctx, w)
 	} else {
 		username, err := scim.UsernameComparisonKey(p.resource.Attributes["userName"].(string))
 		if err != nil {
@@ -179,14 +280,15 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 }
 
 func (p *nativePhase) requireAvailableUsername(ctx context.Context, w kernel.Work, username string, digest [32]byte) error {
-	args := append(scopeArgs(p.service.config().Scope), digest[:], username)
-	rows, err := w.Query(ctx, `SELECT 1 FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND username_digest=$5 AND username_key=$6 LIMIT 1`, args...)
+	args := append(scopeArgs(p.service.config().Scope), digest[:], username, p.original.ID)
+	rows, err := w.Query(ctx, `SELECT 1 FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND username_digest=$5 AND username_key=$6 AND resource_id<>$7 AND deleted_at IS NULL LIMIT 1`, args...)
 	if err != nil {
 		return identity.UnavailableError{}
 	}
 	defer rows.Close()
 	if rows.Next() {
-		return identity.ConflictError{}
+		rows.Close()
+		return w.DenyFeature(ctx, p, p.command, kernel.FeatureFailureUniqueness)
 	}
 	if rows.Err() != nil {
 		return identity.UnavailableError{}
@@ -221,6 +323,11 @@ func (p *nativePhase) checkCurrent(ctx context.Context, w kernel.Work) error {
 			return err
 		}
 	}
+	if nativeMutation(p.intent.Operation) {
+		if err := w.RequireActiveUserStatus(ctx, p, p.originalUserStatus()); err != nil {
+			return err
+		}
+	}
 	now, err := w.DatabaseTime(ctx)
 	if err != nil || !now.Before(original.connection.AuthorityValidUntil) || !now.Before(c.CredentialExpiresAt) {
 		return identity.ForbiddenError{}
@@ -231,11 +338,15 @@ func (p *nativePhase) checkCurrent(ctx context.Context, w kernel.Work) error {
 func (p *nativePhase) executionPlan() (kernel.CommandPlan, error) {
 	spec, _ := p.command.Feature()
 	b, op := spec.Binding, spec.Operation
+	lifecycle := p.lifecycle()
+	if lifecycle.EventType == "" {
+		return kernel.CommandPlan{}, identity.InvalidInputError{Field: "scim_projection_generation"}
+	}
 	builder, err := audit.NewBuilder(audit.BuilderConfig{})
 	if err != nil {
 		return kernel.CommandPlan{}, err
 	}
-	seed, err := builder.Build(audit.RecordInput{OccurredAt: p.original.At, Action: op.OperationID, Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: audit.ActorService, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": "0", "aggregate.after_version": "1", "retention.class": "protected"}})
+	seed, err := builder.Build(audit.RecordInput{OccurredAt: p.original.At, Action: op.OperationID, Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: audit.ActorService, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": strconv.FormatUint(lifecycle.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(lifecycle.AfterVersion, 10), "retention.class": "protected"}})
 	if err != nil {
 		return kernel.CommandPlan{}, err
 	}
@@ -244,7 +355,10 @@ func (p *nativePhase) executionPlan() (kernel.CommandPlan, error) {
 		return kernel.CommandPlan{}, err
 	}
 	registration := p.registration()
-	plan := kernel.CommandPlan{Contributors: p.registry.Descriptors(), Feature: &registration, SubjectType: p.subjectType(), Lifecycle: &kernel.LifecyclePlan{EventType: p.eventType(), AfterVersion: 1}, Audits: []kernel.AuditPlan{{EventType: op.OperationID, SchemaVersion: 1, Required: true, RequiredRecordCount: 1, MaxRecordBytes: 16384, MaxAggregateBytes: 16384, RetentionPolicyVersion: 1, RetentionClass: "protected", BindingDigest: digest}}}
+	plan := kernel.CommandPlan{Contributors: p.registry.Descriptors(), Feature: &registration, SubjectType: p.subjectType(), Lifecycle: &lifecycle, Audits: []kernel.AuditPlan{{EventType: op.OperationID, SchemaVersion: 1, Required: true, RequiredRecordCount: 1, MaxRecordBytes: 16384, MaxAggregateBytes: 16384, RetentionPolicyVersion: 1, RetentionClass: "protected", BindingDigest: digest}}}
+	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
+		plan.SCIMUserUpdate = &kernel.SCIMUserUpdatePlan{Required: len(p.update.Attributes) > 0, ExpectedVersion: p.update.ExpectedVersion}
+	}
 	return p.coordinator.PrepareCommandPlan(b, p.command, plan)
 }
 
@@ -272,8 +386,14 @@ func (p *nativePhase) execute(ctx context.Context) (result identity.CommandResul
 
 func (p *nativePhase) RecoverParticipant(ctx context.Context, w kernel.RecoveryWork) (kernel.RecoveryStatus, error) {
 	b, feature, lifecycle, err := w.FeatureScope(p)
-	if err != nil || feature != p.registration() || lifecycle != (kernel.LifecyclePlan{EventType: p.eventType(), AfterVersion: 1}) {
+	if err != nil || feature != p.registration() || lifecycle != p.lifecycle() {
 		return kernel.RecoveryUnknown, identity.ForbiddenError{}
+	}
+	if p.noOpPatch() {
+		// The frozen equal-version plan declares no native projection write.
+		// This proves only this participant has no domain effect to reconcile;
+		// the actual kernel/audit/outbox owners must still prove their effects.
+		return kernel.RecoveryNotCommitted, nil
 	}
 	// Existing exact native effect is positive/ambiguous evidence, never a
 	// reconstructed commit receipt. Only the retained kernel journal proves commit.
@@ -289,6 +409,10 @@ func (p *nativePhase) RecoverParticipant(ctx context.Context, w kernel.RecoveryW
 	if !rows.Next() {
 		if rows.Err() != nil {
 			return kernel.RecoveryUnknown, identity.UnavailableError{}
+		}
+		if nativeMutation(p.intent.Operation) {
+			rows.Close()
+			return p.recoverOriginalProjection(ctx, w)
 		}
 		return kernel.RecoveryNotCommitted, nil
 	}

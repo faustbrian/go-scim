@@ -94,7 +94,9 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 		}
 	})
 	base := kernel.RequestKeyPreparationMigrationSource{Base: kernel.RequestKeyMigrationSource{Base: kernel.MigrationSource{}, Version: 10}, Version: 11}
-	installSource(t, ctx, pool, kernel.DirectoryAuthorityMigrationSource{Base: base, Version: 12, GlobalAuthorityID: "scim-deployment", TenantIDs: []identity.TenantID{"tenant-a"}})
+	directory := kernel.DirectoryAuthorityMigrationSource{Base: base, Version: 12, GlobalAuthorityID: "scim-deployment", TenantIDs: []identity.TenantID{"tenant-a"}}
+	status := kernel.StatusMigrationSource{Base: directory, Version: 13}
+	installSource(t, ctx, pool, kernel.CanonicalRequestMigrationSource{Base: status, Version: 14})
 	installSource(t, ctx, pool, organizationpg.MigrationSource{Version: 20})
 	installSource(t, ctx, pool, organizationpg.CredentialAuthorityMigrationSource{Version: 21})
 	authoritySQL, err := authoritypg.AuthoritySchemaMigration(30)
@@ -120,7 +122,7 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 	installFS(t, ctx, pool, auditpg.Migrations())
 	installFS(t, ctx, pool, outboxpg.Migrations())
 	installFS(t, ctx, pool, lifecyclepg.Migrations())
-	installSource(t, ctx, pool, MigrationSource{Version: 40})
+	installSource(t, ctx, pool, UsersMigrationSource{Base: MigrationSource{Version: 40}, Version: 41})
 	if _, err := pool.Raw().Exec(ctx, `INSERT INTO organization.organizations(tenant_id,organization_id,slug,name,state,version,member_count,owner_count,credential_version) VALUES('tenant-a','organization-a','scim-fixture','SCIM fixture','active',1,1,1,1)`); err != nil {
 		t.Fatal("configured organization fixture")
 	}

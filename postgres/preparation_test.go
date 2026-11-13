@@ -3,6 +3,8 @@ package scimpostgres
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,18 +90,95 @@ func TestOriginalMetadataUsesActualEnvelopeAndExactProvenance(t *testing.T) {
 	}
 }
 
+func mutationPreparationCodec(t testing.TB) (*nativePhase, kernel.RequestKeyPreparationBinding, originalInput) {
+	t.Helper()
+	p, binding, creationWire := preparationCodec(t)
+	input, err := p.restoreOriginal(context.Background(), binding, creationWire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.Schema, input.Operation = 2, scim.UserPatch
+	input.KernelVersion, input.UserAuthority, input.Generation = 7, 11, 3
+	input.Current = &scim.Resource{ID: input.ID, Version: input.Version, CreatedAt: input.At, LastModified: input.At, Schemas: []string{"urn:ietf:params:scim:schemas:core:2.0:User"}, Attributes: map[string]any{"userName": "Original", "name": map[string]any{"formatted": strings.Repeat("x", 12000)}}}
+	p.intent = scim.WriteIntent{Operation: scim.UserPatch, ResourceID: input.ID, IfMatch: input.Version}
+	binding.Scope.Method, binding.Scope.RouteID, binding.Feature = "PATCH", p.operation().OperationID, p.registration()
+	return p, binding, input
+}
+
+func sealOriginalInput(t testing.TB, p *nativePhase, binding kernel.RequestKeyPreparationBinding, input originalInput) []byte {
+	t.Helper()
+	aad, err := p.preparationAAD(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, err := json.Marshal(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(plain)
+	sealed, err := p.service.crypto.Encrypt(context.Background(), envelope.EncryptRequest{Plaintext: plain, KeyReference: "codec", Context: aad})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := sealed.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire
+}
+
+func TestMutationOriginalMetadataRetainsBoundedDetachedProjection(t *testing.T) {
+	p, binding, input := mutationPreparationCodec(t)
+	wire := sealOriginalInput(t, p, binding, input)
+	if len(wire) <= 8192 {
+		t.Fatal("bounded mutation fixture did not exercise enlarged preparation")
+	}
+	got, err := p.restoreOriginal(context.Background(), binding, wire)
+	if err != nil || got.Current == nil || got.Current.ID != input.ID || got.KernelVersion != 7 || got.UserAuthority != 11 || got.Generation != 3 {
+		t.Fatal("authenticated original mutation inputs did not survive", err)
+	}
+	got.Current.Attributes["userName"] = "Changed detached copy"
+	if input.Current.Attributes["userName"] != "Original" {
+		t.Fatal("original mutation projection was aliased")
+	}
+	for _, change := range []func(*originalInput){
+		func(i *originalInput) { i.Operation = scim.UserReplace },
+		func(i *originalInput) { i.UserAuthority = 0 },
+		func(i *originalInput) { i.Generation = 0 },
+		func(i *originalInput) { i.KernelVersion = 0 },
+		func(i *originalInput) { i.Current = nil },
+	} {
+		changed := input
+		change(&changed)
+		if _, err := p.restoreOriginal(context.Background(), binding, sealOriginalInput(t, p, binding, changed)); err == nil {
+			t.Fatal("incomplete or changed original mutation custody admitted")
+		}
+	}
+	p.intent.ResourceID = "changed-target"
+	if _, err := p.restoreOriginal(context.Background(), binding, wire); err == nil {
+		t.Fatal("authenticated ciphertext moved to a different target")
+	}
+}
+
 func FuzzOriginalMetadataEnvelope(f *testing.F) {
 	p, b, wire := preparationCodec(f)
+	mutation, mutationBinding, mutationInput := mutationPreparationCodec(f)
 	f.Add(wire)
+	f.Add(sealOriginalInput(f, mutation, mutationBinding, mutationInput))
 	f.Add([]byte{})
 	f.Add([]byte("invalid envelope"))
 	f.Fuzz(func(t *testing.T, input []byte) {
-		if len(input) > 16384 {
+		if len(input) > originalCiphertextBytes+1 {
 			return
 		}
-		got, err := p.restoreOriginal(context.Background(), b, input)
-		if err == nil && (got.Command != b.Admission.CommandID || got.Profile != p.service.profile || got.ID == "") {
-			t.Fatal("invalid protected input admitted")
+		for _, codec := range []struct {
+			phase   *nativePhase
+			binding kernel.RequestKeyPreparationBinding
+		}{{p, b}, {mutation, mutationBinding}} {
+			got, err := codec.phase.restoreOriginal(context.Background(), codec.binding, input)
+			if err == nil && (got.Command != codec.binding.Admission.CommandID || got.Profile != codec.phase.service.profile || got.ID == "" || codec.phase == mutation && (got.Schema != 2 || got.Current == nil || got.KernelVersion == 0 || got.UserAuthority == 0 || got.Generation < 1)) {
+				t.Fatal("invalid protected input admitted")
+			}
 		}
 	})
 }

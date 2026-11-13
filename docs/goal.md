@@ -35,18 +35,22 @@ validation, database transactions, durable replay or provisioning effects.
 
 ## Selected native configured Users profile
 
-The optional [PostgreSQL module](../postgres/README.md) supplies one configured
-active User create and scoped read path. It owns its connection/resource
-projections, not identity tables, transaction outcomes or replacement authority.
+The optional [PostgreSQL module](../postgres/README.md) supplies configured,
+authorized discovery and Users create/get/replace/PATCH/delete/list/search.
+It owns its connection/resource projections, not identity tables, transaction
+outcomes or replacement authority.
 Install its forward schema together with the genuine identity, organization,
 authorization, audit and outbox owners. Native create keeps the kernel user,
-projection, command result, audit and outbox effects atomic. Headerless creates
-remain supported; optional keyed retries preserve original server metadata.
+projection, command result, audit and outbox effects atomic. Mutations use the
+same command/Work owner and kernel attribute CAS. Headerless creates remain
+supported; keyed retries and canonical DELETE retain original server metadata
+and outcomes. No-op PATCH preserves its ETag and both stored versions.
 
-This selected profile does not advertise discovery, listing, User mutation or
-deletion, Groups, Bulk, organization reconciliation, SSO synchronization or
-HTTP routes. Its trusted create-only configured bootstrap is not the public
-connection-management lifecycle. Those remain required full-goal work.
+This selected profile does not advertise Groups, Bulk, organization
+reconciliation, SSO synchronization or HTTP routes. DELETE removes only this
+connection's projection, not the global user or membership. Its trusted
+configured bootstrap is not the public connection-management lifecycle.
+Those remain required full-goal work.
 
 ## Full goal retained
 

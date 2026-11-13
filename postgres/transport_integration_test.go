@@ -14,7 +14,10 @@ import (
 // Adapted from the committed kernel's registration transport fixture. This
 // drops only the acknowledgement of the actual SCIM domain COMMIT, never its
 // earlier request mapping/reservation commits. Production SQL is unchanged.
-type nativeCommitFault struct{ hit atomic.Bool }
+type nativeCommitFault struct {
+	hit         atomic.Bool
+	reservation bool // Drop the actual pending journal COMMIT, before domain Work.
+}
 
 func (f *nativeCommitFault) dial(ctx context.Context, network, address string) (net.Conn, error) {
 	connection, err := (&net.Dialer{}).DialContext(ctx, network, address)
@@ -32,7 +35,11 @@ type nativeFaultConn struct {
 }
 
 func (c *nativeFaultConn) Write(wire []byte) (int, error) {
-	if bytes.Contains(wire, []byte("INSERT INTO scim.users(")) {
+	selected := bytes.Contains(wire, []byte("INSERT INTO scim.users(")) || bytes.Contains(wire, []byte("UPDATE scim.users SET"))
+	if c.fault.reservation {
+		selected = bytes.Contains(wire, []byte("INSERT INTO identity.commands("))
+	}
+	if selected {
 		c.mutation.Store(true)
 	}
 	return c.Conn.Write(wire)

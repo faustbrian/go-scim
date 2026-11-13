@@ -3,16 +3,21 @@
 package scimpostgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/faustbrian/go-audit"
 	authentication "github.com/faustbrian/go-authentication/v2"
+	identity "github.com/faustbrian/go-identity"
 	database "github.com/faustbrian/go-postgres"
 	scim "github.com/faustbrian/go-scim"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // nativeFixture installs genuine published kernel, organization, authorization,
@@ -84,7 +89,7 @@ func TestNativeConfiguredCreateGetReplay(t *testing.T) {
 	if _, err := f.service.Execute(f.ctx, get); err == nil || protocolStatus(err) != 401 {
 		t.Fatal("wrong credential disclosed resource", err)
 	}
-	for _, operation := range []scim.Operation{scim.UserList, scim.UserReplace, scim.UserPatch, scim.UserDelete, scim.SchemasList, scim.ResourceTypesList, scim.ServiceProviderConfig} {
+	for _, operation := range []scim.Operation{scim.GroupCreate, scim.GroupGet, scim.GroupList, scim.GroupReplace, scim.GroupPatch, scim.GroupDelete, scim.Bulk} {
 		if _, err := f.service.Execute(f.ctx, scim.Request{Operation: operation, Credential: f.bearer}); err == nil || protocolStatus(err) != 501 {
 			t.Fatal("unsupported native profile advertised or executed", operation, err)
 		}
@@ -139,26 +144,104 @@ func TestNativeLostCommitReturnsOriginalResource(t *testing.T) {
 
 func TestNativeAuditAndOutboxFailureRollBackKernelAndProjection(t *testing.T) {
 	for _, table := range []string{"audit.records", "public.outbox_messages"} {
-		t.Run(table, func(t *testing.T) {
-			f := newNativeFixture(t)
-			if _, err := f.service.InitializeConfiguredConnection(f.ctx); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := f.pool.Raw().Exec(f.ctx, `CREATE FUNCTION public.scim_fixture_failure() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RAISE EXCEPTION 'fixture failure'; END $f$; CREATE TRIGGER scim_fixture_failure BEFORE INSERT ON `+table+` FOR EACH ROW EXECUTE FUNCTION public.scim_fixture_failure()`); err != nil {
-				t.Fatal("owned failure boundary")
-			}
-			r := scim.Request{Operation: scim.UserCreate, Credential: f.bearer, IdempotencyKey: "must-rollback", ContentType: "application/scim+json", Body: []byte(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"Rollback","displayName":"Not durable"}`)}
-			if response, err := f.service.Execute(f.ctx, r); err == nil || len(response.Body) != 0 {
-				t.Fatal("failed required owner returned success", err)
-			}
-			var users, attrs, projection, outbox int
-			if err := f.pool.Raw().QueryRow(f.ctx, `SELECT (SELECT count(*) FROM identity.users),(SELECT count(*) FROM identity.user_attributes),(SELECT count(*) FROM scim.users),(SELECT count(*) FROM public.outbox_messages)`).Scan(&users, &attrs, &projection, &outbox); err != nil {
-				t.Fatal(err)
-			}
-			if users != 0 || attrs != 0 || projection != 0 || outbox != 1 {
-				t.Fatal("non-atomic native failure", users, attrs, projection, outbox)
-			}
-		})
+		for _, operation := range []scim.Operation{scim.UserCreate, scim.UserReplace, scim.UserPatch, scim.UserDelete} {
+			t.Run(table+"/"+string(operation), func(t *testing.T) {
+				f := newNativeFixture(t)
+				var id, originalProjection string
+				var original scim.Response
+				var originalUser identity.User
+				if operation != scim.UserCreate {
+					id = createNativeNamed(t, f, "RollbackBefore", "Before failure")
+					var err error
+					original, err = f.service.Execute(f.ctx, scim.Request{Operation: scim.UserGet, Credential: f.bearer, ResourceID: id})
+					if err != nil {
+						t.Fatal(err)
+					}
+					originalUser, err = f.service.directory.Get(f.ctx, identity.GetUserQuery{TenantID: f.config.Scope.TenantID, UserID: identity.UserID(id)})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := f.pool.Raw().QueryRow(f.ctx, `SELECT to_jsonb(s)::text FROM scim.users s WHERE resource_id=$1`, id).Scan(&originalProjection); err != nil {
+						t.Fatal("original complete projection state", err)
+					}
+				}
+				type successCounts struct{ users, attributes, projections, messages, bindings, audits int }
+				counts := func() successCounts {
+					t.Helper()
+					var value successCounts
+					if err := f.pool.Raw().QueryRow(f.ctx, `SELECT
+ (SELECT count(*) FROM identity.users),(SELECT count(*) FROM identity.user_attributes),
+ (SELECT count(*) FROM scim.users),(SELECT count(*) FROM public.outbox_messages),
+ (SELECT count(*) FROM public.identity_outbox_bindings),(SELECT count(*) FROM audit.records WHERE outcome=$1)`, int16(audit.OutcomeSucceeded)).Scan(&value.users, &value.attributes, &value.projections, &value.messages, &value.bindings, &value.audits); err != nil {
+						t.Fatal("actual owned success effects", err)
+					}
+					return value
+				}
+				before := counts()
+				var reached atomic.Bool
+				pool, err := database.Connect(f.ctx, database.Config{DSN: os.Getenv("SCIM_POSTGRES_TEST_DSN"), MaxConns: 3, Configure: func(c *database.PoolConfig) error {
+					c.ConnConfig.Database = f.pool.Raw().Config().ConnConfig.Database
+					c.ConnConfig.RuntimeParams["client_min_messages"] = "notice"
+					c.ConnConfig.OnNotice = func(_ *pgconn.PgConn, notice *pgconn.Notice) {
+						if notice.Code == "PZ001" {
+							reached.Store(true)
+						}
+					}
+					return nil
+				}})
+				if err != nil {
+					t.Fatal("owned failure-observation pool", err)
+				}
+				defer func() {
+					cleanup, stop := context.WithTimeout(context.Background(), 3*time.Second)
+					defer stop()
+					if err := pool.Close(cleanup); err != nil {
+						t.Error("failure-observation pool cleanup", err)
+					}
+				}()
+				service, err := NewService(pool, f.config, f.keys)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// The notice survives rollback and proves this actual required-owner
+				// INSERT was reached, rather than accepting an unrelated early error.
+				if _, err := f.pool.Raw().Exec(f.ctx, `CREATE FUNCTION public.scim_fixture_failure() RETURNS trigger LANGUAGE plpgsql AS $f$ BEGIN RAISE NOTICE USING ERRCODE='PZ001',MESSAGE='owned failure reached'; RAISE EXCEPTION 'fixture failure'; END $f$; CREATE TRIGGER scim_fixture_failure BEFORE INSERT ON `+table+` FOR EACH ROW EXECUTE FUNCTION public.scim_fixture_failure()`); err != nil {
+					t.Fatal("owned failure boundary", err)
+				}
+				request := scim.Request{Operation: operation, Credential: f.bearer, ResourceID: id, IfMatch: original.ETag, IdempotencyKey: "must-rollback", ContentType: "application/scim+json"}
+				switch operation {
+				case scim.UserCreate, scim.UserReplace:
+					request.Body = []byte(`{"schemas":["urn:ietf:params:scim:schemas:core:2.0:User"],"userName":"RollbackChanged","displayName":"Not durable"}`)
+				case scim.UserPatch:
+					request.Body = []byte(`{"schemas":["urn:ietf:params:scim:api:messages:2.0:PatchOp"],"Operations":[{"op":"replace","path":"userName","value":"RollbackChanged"},{"op":"replace","path":"displayName","value":"Not durable"}]}`)
+				}
+				if response, err := service.Execute(f.ctx, request); err == nil || len(response.Body) != 0 || !reached.Load() {
+					t.Fatal("required owner failure was not reached or returned success", reached.Load(), err)
+				}
+				if after := counts(); after != before {
+					t.Fatalf("required owner failure leaked success effects: before=%+v after=%+v", before, after)
+				}
+				var committed int
+				if err := f.pool.Raw().QueryRow(f.ctx, `SELECT count(*) FROM identity.commands WHERE purpose=$1 AND state='committed'`, string(operation)).Scan(&committed); err != nil || committed != 0 {
+					t.Fatal("failed mutation received a committed journal result", committed, err)
+				}
+				if operation != scim.UserCreate {
+					user, err := f.service.directory.Get(f.ctx, identity.GetUserQuery{TenantID: f.config.Scope.TenantID, UserID: identity.UserID(id)})
+					if err != nil || user != originalUser {
+						t.Fatal("required owner failure changed core user version/status", err)
+					}
+					assertNativeMappedFields(t, f, id, "RollbackBefore", "Before failure")
+					var projection string
+					if err := f.pool.Raw().QueryRow(f.ctx, `SELECT to_jsonb(s)::text FROM scim.users s WHERE resource_id=$1`, id).Scan(&projection); err != nil || projection != originalProjection {
+						t.Fatal("required owner failure changed native payload/generation/tombstone/keys", err)
+					}
+					response, err := f.service.Execute(f.ctx, scim.Request{Operation: scim.UserGet, Credential: f.bearer, ResourceID: id})
+					if err != nil || response.ETag != original.ETag || !bytes.Equal(response.Body, original.Body) {
+						t.Fatal("required owner failure changed the public resource/ETag", err)
+					}
+				}
+			})
+		}
 	}
 }
 

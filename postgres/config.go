@@ -80,6 +80,7 @@ type Service struct {
 	profile       [32]byte
 	directory     *kernel.Repository
 	domain        *kernel.SCIMUserCreationDomain
+	updates       *kernel.SCIMUserUpdateDomain
 	organizations *organizationpg.Repository
 	authority     *authoritypg.AuthorityStore
 	crypto        *envelope.Service
@@ -94,7 +95,7 @@ func (Service) Format(s fmt.State, _ rune) {
 // MarshalJSON forbids implicit export of runtime composition.
 func (Service) MarshalJSON() ([]byte, error) { return nil, ErrInvalidConfiguration }
 
-// NewService validates and snapshots the bounded create/get profile without IO,
+// NewService validates and snapshots the bounded configured Users profile without IO,
 // migrations, policy callbacks or credential comparison. The local keyring
 // protects original prepared input under the existing kernel request mapping.
 // There is no adapter-owned connection lifecycle or caller-supplied domain store.
@@ -184,6 +185,10 @@ func NewService(pool *database.Pool, c Config, keys *keyring.Provider) (*Service
 	if err != nil {
 		return bad()
 	}
+	updates, err := kernel.NewSCIMUserUpdateDomain(directory)
+	if err != nil {
+		return bad()
+	}
 	organizations, err := organizationpg.NewRepository(pool, organizationpg.Config{MaximumDuration: c.MaximumDuration})
 	if err != nil {
 		return bad()
@@ -215,7 +220,7 @@ func NewService(pool *database.Pool, c Config, keys *keyring.Provider) (*Service
 	}
 	profile := sha256.Sum256(frame)
 	clear(frame)
-	s := &Service{pool: pool, config: func() Config { return c }, profile: profile, directory: directory, domain: domain, organizations: organizations, authority: authority, crypto: crypto}
+	s := &Service{pool: pool, config: func() Config { return c }, profile: profile, directory: directory, domain: domain, updates: updates, organizations: organizations, authority: authority, crypto: crypto}
 	bridge := &protocolBridge{service: s}
 	s.protocol, err = scim.NewUsersService(scim.Config{Store: bridge, Authenticator: bridge, Authorizer: bridge, Mapper: bridge, Limits: c.Limits, BaseURL: c.BaseURL, RequestTimeout: c.MaximumDuration})
 	if err != nil {
@@ -261,6 +266,22 @@ func (s *Service) coordinator(p *nativePhase) (*kernel.Coordinator, *kernel.Cont
 		return nil, nil, err
 	}
 	c := s.config()
-	coordinator, err := kernel.NewCoordinatorWithRequestKeys(s.pool, registry, c.Coordinator, c.RequestKeys)
+	keys := s.requestKeys(p)
+	var coordinator *kernel.Coordinator
+	if p.intent.Operation == scim.UserDelete && !p.bootstrap {
+		coordinator, err = kernel.NewCoordinatorWithCanonicalRequestKeys(s.pool, registry, c.Coordinator, keys)
+	} else {
+		coordinator, err = kernel.NewCoordinatorWithRequestKeys(s.pool, registry, c.Coordinator, keys)
+	}
 	return coordinator, registry, err
+}
+
+func (s *Service) requestKeys(p *nativePhase) kernel.RequestKeyConfig {
+	keys := s.config().RequestKeys
+	if p != nil && p.intent.Operation == scim.UserDelete && !p.bootstrap {
+		// Same private lookup custody and journal, distinct trusted namespace
+		// mode. A protocol selector is never an invented client retry header.
+		keys.Namespace += "-canonical-delete-v1"
+	}
+	return keys
 }
