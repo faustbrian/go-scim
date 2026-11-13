@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Allow trusted durable preparation to retain replace/PATCH version and
+  modification time while preserving resource identity, creation time and
+  no-op PATCH metadata. Nil selection preserves existing generation.
+
 ### Fixed
 
 - Run hosted verification on Go 1.27.4, matching the tested native adapter

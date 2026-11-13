@@ -501,6 +501,16 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 	} else if current != nil {
 		return Response{}, failure(409, "uniqueness")
 	}
+	if prepared.UpdateMetadata != nil {
+		metadata := *prepared.UpdateMetadata
+		metadata.LastModified = metadata.LastModified.UTC()
+		updateOperation := r.Operation == s.profile.replace || r.Operation == s.profile.patch
+		validTime := !metadata.LastModified.IsZero() && metadata.LastModified.Year() >= 1 && metadata.LastModified.Year() <= 9999
+		if !updateOperation || current == nil || !validVersion(metadata.Version) || !validTime || metadata.LastModified.Before(current.LastModified) {
+			return Response{}, failure(503, "")
+		}
+		prepared.UpdateMetadata = &metadata
+	}
 	if r.Operation == s.profile.replace {
 		input, e = s.normalize(doc, current.Attributes)
 		if e != nil {
@@ -561,6 +571,9 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 			mapped = s.preserveReadOnly(*current, mapped)
 		}
 		metadata := prepared.CreateMetadata
+		if update := prepared.UpdateMetadata; update != nil {
+			metadata = &CreateMetadata{ID: current.ID, CreatedAt: current.CreatedAt, Version: update.Version, LastModified: update.LastModified}
+		}
 		if metadata == nil {
 			now := s.config.Now()
 			id := r.ResourceID
@@ -586,6 +599,8 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 		resource := Resource{ID: metadata.ID, Version: metadata.Version, CreatedAt: metadata.CreatedAt, LastModified: metadata.LastModified, Schemas: append([]string(nil), mapped.Schemas...), ExternalID: mapped.ExternalID, Attributes: cloneMap(mapped.Attributes)}
 		if r.Operation == s.profile.patch && current != nil && s.sameProjection(*current, mapped) {
 			resource = cloneResource(*current)
+		} else if prepared.UpdateMetadata != nil && resource.Version == current.Version {
+			return Response{}, failure(503, "")
 		}
 		// A response that cannot fit is rejected before commit, not after mutation.
 		if _, e = s.resourceResponse(resource, 200, p); e != nil {

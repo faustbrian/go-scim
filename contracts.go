@@ -183,6 +183,19 @@ type CreateMetadata struct {
 	LastModified time.Time
 }
 
+// UpdateMetadata selects original server-owned version/time for one prepared
+// replace or PATCH. The Store must bind it and Current to the original canonical
+// request. ID and CreatedAt always come from Current, never these fields. Version
+// follows Resource's bounds; LastModified is nonzero, normalizes to UTC, has a
+// year in1..9999 and cannot precede Current.LastModified. A changed resource must
+// receive a different version. No-op PATCH preserves Current's version/time.
+// The protocol snapshots this value before mapping; nil retains per-call
+// generation. It grants no authority or permission to bypass current CAS.
+type UpdateMetadata struct {
+	Version      Version
+	LastModified time.Time
+}
+
 // Format prevents accidental command-payload/optional-key disclosure.
 func (WriteIntent) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "scim.WriteIntent(redacted)")
@@ -212,6 +225,10 @@ type PreparedWrite struct {
 	// create only. Other fresh operations reject it; replay uses the original
 	// WriteResult instead. No client request field can select this metadata.
 	CreateMetadata *CreateMetadata
+	// UpdateMetadata optionally selects retained version/time for replace/PATCH
+	// only. Other fresh operations reject it; replay uses original WriteResult.
+	// A client request cannot select this trusted Store-owned metadata.
+	UpdateMetadata *UpdateMetadata
 }
 
 // Change is the fully validated candidate or a deletion, never both. It carries

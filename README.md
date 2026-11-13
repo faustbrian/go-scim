@@ -32,6 +32,14 @@ schema and mapping pipeline. Nil retains legacy metadata generation; replay
 uses its original committed result. The exact final resource comparison is
 unchanged: a Store cannot replace the attempted resource after mutation.
 
+For replace/PATCH, `PreparedWrite.UpdateMetadata` can retain the original
+version and modification time alongside the detached original `Current`.
+Resource ID and creation time still come only from that snapshot. The protocol
+copies and UTC-normalizes metadata before mapping, rejects backward time or a
+reused version for a changed resource, and preserves no-op PATCH metadata.
+Nil keeps existing generation; replay still uses the original result. This is
+not durable storage, CAS or permission to renew connection authority.
+
 ## Selected profile
 
 `NewUsersService(Config)` constructs one immutable runtime/discovery snapshot.
