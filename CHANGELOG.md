@@ -36,6 +36,11 @@
 
 ### Added
 
+- An additive combined User/Group protocol service with one shared authority
+  and effective-limit configuration, truthful bounded discovery for both typed
+  owners, immutable per-resource extensions and conflicting-schema rejection.
+  Existing single-resource APIs are unchanged. Combined root search, Bulk and
+  native provisioning remain unsupported by this selected composition.
 - An additive storage-neutral Groups protocol profile with distinct GroupStore
   and GroupMapper contracts, matching discovery, Group CRUD/atomic PATCH and
   bounded filter/sort/page/search. Existing Users APIs remain User-specific.

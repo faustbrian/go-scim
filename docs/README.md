@@ -11,5 +11,6 @@ native provisioning and full SCIM qualification remain unfinished.
 - [Goal: SCIM Users protocol-service profile](goal.md) — `docs/goal.md`
 - [Users profile decisions and limits](users-profile.md) — `docs/users-profile.md`
 - [Groups profile decisions and limits](groups-profile.md) — `docs/groups-profile.md`
+- [Combined Users and Groups protocol profile](combined-profile.md) — `docs/combined-profile.md`
 - [SCIM threat model](security/threat-model.md) — `docs/security/threat-model.md`
 - [Security boundaries](security.md) — `docs/security.md`

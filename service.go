@@ -126,7 +126,7 @@ func (s *protocolService) execute(parent context.Context, r Request) (out Respon
 		}
 		out = Response{Status: 200, ContentType: "application/scim+json", Body: b}
 	case s.profile.list, s.profile.search, Search:
-		if r.Operation == Search && s.profile.schema.ID != userSchema {
+		if r.Operation == Search && (s.profile.schema.ID != userSchema || s.rootSearchUnavailable) {
 			return Response{}, failure(501, "")
 		}
 		q := r.Query

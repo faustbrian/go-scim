@@ -3,6 +3,10 @@ package scim
 import "encoding/json"
 
 func (s *protocolService) discovery(op Operation, id string) (any, error) {
+	profiles := s.discoveryProfiles
+	if len(profiles) == 0 {
+		profiles = []discoveryProfile{{resource: s.profile, extensions: s.config.Extensions}}
+	}
 	switch op {
 	case ServiceProviderConfig:
 		d := map[string]any{"schemas": []string{configSchema}, "patch": map[string]any{"supported": true}, "bulk": map[string]any{"supported": false, "maxOperations": 0, "maxPayloadSize": 0}, "filter": map[string]any{"supported": true, "maxResults": s.config.Limits.PageMax}, "changePassword": map[string]any{"supported": false}, "sort": map[string]any{"supported": true}, "etag": map[string]any{"supported": true}, "authenticationSchemes": []any{map[string]any{"type": "oauthbearertoken", "name": "OAuth Bearer Token", "description": "Scoped bearer token", "specUri": "https://www.rfc-editor.org/rfc/rfc6750", "primary": true}}}
@@ -11,27 +15,38 @@ func (s *protocolService) discovery(op Operation, id string) (any, error) {
 		}
 		return d, nil
 	case ResourceTypeGet, ResourceTypesList:
-		if op == ResourceTypeGet && id != s.profile.schema.Name {
+		docs := []any{}
+		for _, profile := range profiles {
+			extensions := []any{}
+			for _, schema := range profile.extensions {
+				extensions = append(extensions, map[string]any{"schema": schema.ID, "required": false})
+			}
+			resource := profile.resource
+			d := map[string]any{"schemas": []string{resourceTypeSchema}, "id": resource.schema.Name, "name": resource.schema.Name, "endpoint": resource.endpoint, "schema": resource.schema.ID, "schemaExtensions": extensions}
+			if op == ResourceTypeGet && id == resource.schema.Name {
+				return d, nil
+			}
+			docs = append(docs, d)
+		}
+		if op == ResourceTypeGet {
 			return nil, failure(404, "")
 		}
-		extensions := []any{}
-		for _, schema := range s.config.Extensions {
-			extensions = append(extensions, map[string]any{"schema": schema.ID, "required": false})
-		}
-		d := map[string]any{"schemas": []string{resourceTypeSchema}, "id": s.profile.schema.Name, "name": s.profile.schema.Name, "endpoint": s.profile.endpoint, "schema": s.profile.schema.ID, "schemaExtensions": extensions}
-		if op == ResourceTypeGet {
-			return d, nil
-		}
-		return listDocument([]any{d}, 1, 1), nil
+		return listDocument(docs, len(docs), 1), nil
 	case SchemaGet, SchemasList:
-		schemas := append([]Schema{s.profile.schema}, s.config.Extensions...)
 		docs := []any{}
-		for _, schema := range schemas {
-			doc := map[string]any{"schemas": []string{schemaSchema}, "id": schema.ID, "name": schema.Name, "description": schema.Description, "attributes": schema.Attributes}
-			if op == SchemaGet && id == schema.ID {
-				return doc, nil
+		seen := map[string]bool{}
+		for _, profile := range profiles {
+			for _, schema := range append([]Schema{profile.resource.schema}, profile.extensions...) {
+				if seen[schema.ID] {
+					continue
+				}
+				seen[schema.ID] = true
+				doc := map[string]any{"schemas": []string{schemaSchema}, "id": schema.ID, "name": schema.Name, "description": schema.Description, "attributes": schema.Attributes}
+				if op == SchemaGet && id == schema.ID {
+					return doc, nil
+				}
+				docs = append(docs, doc)
 			}
-			docs = append(docs, doc)
 		}
 		if op == SchemaGet {
 			return nil, failure(404, "")

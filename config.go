@@ -67,9 +67,11 @@ type Config struct {
 type UsersService struct{ service *protocolService }
 
 type protocolService struct {
-	config  Config
-	profile resourceProfile
-	groups  groupDependencies
+	config                Config
+	profile               resourceProfile
+	groups                groupDependencies
+	discoveryProfiles     []discoveryProfile
+	rootSearchUnavailable bool
 }
 
 // NewUsersService validates the entire effective runtime/discovery snapshot.

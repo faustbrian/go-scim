@@ -35,6 +35,14 @@ discovery, CRUD, atomic PATCH, bounded list/filter/sort/page and `Groups/.search
 with distinct `GroupStore` and `GroupMapper` contracts. Group membership references
 cannot select another connection or treat a User projection as a Group.
 
+[`NewCombinedService(CombinedConfig)`](docs/combined-profile.md) selects both
+existing typed resource owners through one public `Execute` surface. Its shared
+Schemas/ResourceTypes discovery describes both actual profiles and their exact
+optional extensions under one authority, limits, URL and clock configuration.
+Identical shared schema IDs are listed once; conflicting descriptors and
+unencodable combined collections fail construction. Existing single-resource
+constructors retain their own discovery and behavior.
+
 Bulk, password/credential writes and connection lifecycle operations remain
 unimplemented. Groups are absent from the Users service's ResourceTypes; ServiceProviderConfig
 advertises Bulk and change-password as unsupported. Every password or
@@ -95,9 +103,11 @@ adapter. Do not infer database correctness from protocol tests.
 routes, raw/decoded streaming limits, TLS, header parsing, deadlines and writing
 `*Error` with its `StatusCode()` and `application/scim+json`. It must expose no
 Groups routes for a Users-only composition, or Users routes for a Groups-only
-composition. Neither service exposes Bulk/connection-management routes. Combined
-root search/discovery is a later integration obligation, not implemented by
-silently routing Groups through the Users store. No HTTP server,
+composition. No selected service exposes Bulk/connection-management routes.
+The combined service dispatches Group operations only to GroupStore/GroupMapper
+and User operations only to Store/Mapper. Combined root search remains a later
+integration obligation and fails closed rather than returning a User-only
+subset. No HTTP server,
 background goroutine, environment lookup, database, network client or global
 registration is started by this package.
 

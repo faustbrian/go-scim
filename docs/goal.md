@@ -19,6 +19,13 @@ boundaries, preserving Users-only compatibility. Unsupported resource types,
 Bulk and password changes must not
 be advertised or silently accepted.
 
+The additive combined profile selects both existing typed resource owners under
+one authority/effective-limit configuration, exposing their complete shared
+discovery and original User/Group operations through one public Execute surface.
+Conflicting schema identities and impossible combined-response limits fail
+construction. Root search remains explicitly unavailable in that profile;
+selecting both owners does not provide a cross-type transaction snapshot.
+
 [Users decisions](users-profile.md) and [Groups decisions](groups-profile.md) document the exact supported schemas,
 configuration and store/authority obligations. Boundary doubles prove protocol
 behavior only, not real identity/organization authority, connection bearer

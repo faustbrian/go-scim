@@ -33,7 +33,7 @@ const (
 	UserList              Operation = "identity.scim.user-list"
 	UserSearch            Operation = "identity.scim.user-search"
 	Search                Operation = "identity.scim.search"
-	// Group operations are selected only through NewGroupsService.
+	// Group operations are selected through NewGroupsService or NewCombinedService.
 	GroupCreate  Operation = "identity.scim.group-create"
 	GroupGet     Operation = "identity.scim.group-get"
 	GroupReplace Operation = "identity.scim.group-replace"
