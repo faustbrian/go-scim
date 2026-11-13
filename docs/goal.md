@@ -23,8 +23,10 @@ The additive combined profile selects both existing typed resource owners under
 one authority/effective-limit configuration, exposing their complete shared
 discovery and original User/Group operations through one public Execute surface.
 Conflicting schema identities and impossible combined-response limits fail
-construction. Root search remains explicitly unavailable in that profile;
-selecting both owners does not provide a cross-type transaction snapshot.
+construction. Root search additionally requires one explicit RootSnapshotter
+owning a complete bounded mixed-resource transaction or immutable snapshot;
+selecting separate stores alone does not supply that consistency. Unselected
+configurations retain 501; no native adapter or provisioning claim is added.
 
 [Users decisions](users-profile.md) and [Groups decisions](groups-profile.md) document the exact supported schemas,
 configuration and store/authority obligations. Boundary doubles prove protocol

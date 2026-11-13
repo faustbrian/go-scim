@@ -75,7 +75,10 @@ type attributePath struct {
 	text, extension string
 	parts           []Attribute
 	defaultPrimary  bool
+	rootType        RootResourceType
 }
+
+type pathResolver func(string, []Attribute) (attributePath, error)
 
 func resolvePath(raw string, ext []Schema, l Limits, local []Attribute, core ...Schema) (attributePath, error) {
 	return resolveAttributePath(raw, ext, l, local, false, core...)
@@ -151,6 +154,9 @@ func resolveAttributePath(raw string, ext []Schema, l Limits, local []Attribute,
 }
 func (p attributePath) attribute() Attribute { return p.parts[len(p.parts)-1] }
 func pathValues(doc map[string]any, p attributePath) []any {
+	if !p.appliesTo(doc) {
+		return nil
+	}
 	var value any = doc
 	if p.extension != "" {
 		value = doc[p.extension]
@@ -278,12 +284,17 @@ type filterParser struct {
 	tokens     []filterToken
 	pos, nodes int
 	limits     Limits
-	extensions []Schema
 	local      []Attribute
-	core       Schema
+	resolve    pathResolver
 }
 
 func parseFilter(expr string, ext []Schema, l Limits, local []Attribute, core ...Schema) (Filter, error) {
+	return parseResolvedFilter(expr, l, local, func(raw string, local []Attribute) (attributePath, error) {
+		return resolvePath(raw, ext, l, local, core...)
+	})
+}
+
+func parseResolvedFilter(expr string, l Limits, local []Attribute, resolve pathResolver) (Filter, error) {
 	if expr == "" {
 		return Filter{}, nil
 	}
@@ -291,7 +302,7 @@ func parseFilter(expr string, ext []Schema, l Limits, local []Attribute, core ..
 	if e != nil {
 		return Filter{}, e
 	}
-	p := filterParser{tokens: tokens, limits: l, extensions: ext, local: local, core: selectedCore(core)}
+	p := filterParser{tokens: tokens, limits: l, local: local, resolve: resolve}
 	n, e := p.expression(1, 0)
 	if e != nil || p.pos != len(tokens) {
 		return Filter{}, failure(400, "invalidFilter")
@@ -384,7 +395,7 @@ func (p *filterParser) atom(depth int) (*filterNode, error) {
 		return nil, failure(400, "invalidFilter")
 	}
 	p.pos++
-	path, e := resolvePath(token.text, p.extensions, p.limits, p.local, p.core)
+	path, e := p.resolve(token.text, p.local)
 	if e != nil {
 		return nil, failure(400, "invalidFilter")
 	}

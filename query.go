@@ -16,6 +16,12 @@ type queryPlan struct {
 }
 
 func (s *protocolService) planQuery(q Query) (queryPlan, error) {
+	return s.planResolvedQuery(q, func(raw string, local []Attribute) (attributePath, error) {
+		return resolvePath(raw, s.config.Extensions, s.config.Limits, local, s.profile.schema)
+	})
+}
+
+func (s *protocolService) planResolvedQuery(q Query, resolve pathResolver) (queryPlan, error) {
 	p := queryPlan{query: q}
 	l := s.config.Limits
 	if len(q.Attributes) > l.BodyBytes || len(q.ExcludedAttributes) > l.BodyBytes {
@@ -25,7 +31,7 @@ func (s *protocolService) planQuery(q Query) (queryPlan, error) {
 		return p, failure(400, "invalidValue")
 	}
 	var e error
-	p.filter, e = parseFilter(q.Filter, s.config.Extensions, l, nil, s.profile.schema)
+	p.filter, e = parseResolvedFilter(q.Filter, l, nil, resolve)
 	if e != nil {
 		return p, e
 	}
@@ -33,7 +39,7 @@ func (s *protocolService) planQuery(q Query) (queryPlan, error) {
 		return p, failure(400, "invalidValue")
 	}
 	if q.SortBy != "" {
-		path, e := resolvePath(q.SortBy, s.config.Extensions, l, nil, s.profile.schema)
+		path, e := resolve(q.SortBy, nil)
 		if e != nil {
 			return p, failure(400, "invalidValue")
 		}
@@ -61,14 +67,15 @@ func (s *protocolService) planQuery(q Query) (queryPlan, error) {
 		names := strings.Split(list.raw, ",")
 		seen := map[string]bool{}
 		for _, name := range names {
-			path, e := resolvePath(strings.TrimSpace(name), s.config.Extensions, l, nil, s.profile.schema)
+			path, e := resolve(strings.TrimSpace(name), nil)
 			if e != nil {
 				return p, failure(400, "invalidValue")
 			}
-			if seen[path.text] {
+			identity := string(path.rootType) + ":" + path.text
+			if seen[identity] {
 				return p, failure(400, "invalidValue")
 			}
-			seen[path.text] = true
+			seen[identity] = true
 			*list.dest = append(*list.dest, path)
 		}
 	}
@@ -253,6 +260,9 @@ func compareSortValue(a, b any, attr Attribute) (int, bool) {
 }
 
 func sortValue(doc map[string]any, path attributePath) any {
+	if !path.appliesTo(doc) {
+		return nil
+	}
 	var current any = doc
 	if path.extension != "" {
 		current = doc[path.extension]
@@ -320,7 +330,7 @@ func pruneReturned(doc map[string]any, attrs []Attribute, prefix string, p query
 		}
 		keep := a.Returned == "always"
 		if a.Returned != "always" {
-			included := len(p.include) == 0 && (ancestorIncluded && a.Returned != "request" || p.supplied[path])
+			included := p.query.Attributes == "" && (ancestorIncluded && a.Returned != "request" || p.supplied[path])
 			for _, q := range p.include {
 				if q.text == path || strings.HasPrefix(path, q.text+".") || strings.HasPrefix(q.text, path+".") {
 					included = true

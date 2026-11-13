@@ -16,10 +16,13 @@ import (
 // identical shared schema IDs must have identical effective descriptors.
 // GroupMembers has GroupsConfig's explicit zero-means-empty semantics.
 type CombinedConfig struct {
-	UserStore        Store
-	UserMapper       Mapper
-	GroupStore       GroupStore
-	GroupMapper      GroupMapper
+	UserStore   Store
+	UserMapper  Mapper
+	GroupStore  GroupStore
+	GroupMapper GroupMapper
+	// RootSnapshotter optionally selects combined root Search. A nil interface
+	// preserves 501; a typed-nil implementation is invalid configuration.
+	RootSnapshotter  RootSnapshotter
 	Authenticator    Authenticator
 	Authorizer       Authorizer
 	Limits           Limits
@@ -35,8 +38,9 @@ type CombinedConfig struct {
 // CombinedService executes the existing typed User and Group operations with
 // shared discovery describing both actual owners. It caches no authentication,
 // holds no transaction or lock, and starts no background work. Concurrent safety
-// depends on its borrowed dependencies. Bulk, combined root search and connection
-// lifecycle remain unsupported; this is not a native provisioning backend.
+// depends on its borrowed dependencies. Combined root search requires the
+// explicit RootSnapshotter. Bulk and connection lifecycle remain unsupported;
+// this is not a native provisioning backend.
 type CombinedService struct {
 	users  *UsersService
 	groups *GroupsService
@@ -54,6 +58,9 @@ type discoveryProfile struct {
 // and limits unable to encode the complete discovery return nil/invalidValue.
 // Existing single-resource constructors retain their own selected discovery.
 func NewCombinedService(c CombinedConfig) (*CombinedService, error) {
+	if c.RootSnapshotter != nil && nilInterface(c.RootSnapshotter) {
+		return nil, failure(400, "invalidValue")
+	}
 	users, err := NewUsersService(Config{
 		Store: c.UserStore, Mapper: c.UserMapper,
 		Authenticator: c.Authenticator, Authorizer: c.Authorizer,
@@ -91,6 +98,10 @@ func NewCombinedService(c CombinedConfig) (*CombinedService, error) {
 	// A combined root search cannot truthfully reuse the existing User-only
 	// snapshot: these stores do not provide one cross-type transaction snapshot.
 	users.service.rootSearchUnavailable = true
+	if c.RootSnapshotter != nil {
+		users.service.rootSearch = &rootSearchProfile{reader: c.RootSnapshotter, users: users.service, groups: groups.service}
+		users.service.rootSearchUnavailable = false
+	}
 	for _, operation := range []Operation{ServiceProviderConfig, SchemasList, ResourceTypesList} {
 		doc, err := users.service.discovery(operation, "")
 		if err != nil {

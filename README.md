@@ -43,6 +43,13 @@ Identical shared schema IDs are listed once; conflicting descriptors and
 unencodable combined collections fail construction. Existing single-resource
 constructors retain their own discovery and behavior.
 
+Combined root `.search` is available only with an explicit `RootSnapshotter`
+owning one complete bounded mixed User/Group transaction or immutable view.
+The same public Execute surface performs schema-aware filtering, sorting,
+projection and exact pagination; it never stitches separate store snapshots.
+Configurations without that read owner retain 501. See the
+[root snapshot contract](docs/combined-profile.md#one-mixed-resource-root-snapshot).
+
 Bulk, password/credential writes and connection lifecycle operations remain
 unimplemented. Groups are absent from the Users service's ResourceTypes; ServiceProviderConfig
 advertises Bulk and change-password as unsupported. Every password or
@@ -105,9 +112,9 @@ routes, raw/decoded streaming limits, TLS, header parsing, deadlines and writing
 Groups routes for a Users-only composition, or Users routes for a Groups-only
 composition. No selected service exposes Bulk/connection-management routes.
 The combined service dispatches Group operations only to GroupStore/GroupMapper
-and User operations only to Store/Mapper. Combined root search remains a later
-integration obligation and fails closed rather than returning a User-only
-subset. No HTTP server,
+and User operations only to Store/Mapper. Combined root search requires the
+explicit single mixed-resource snapshot owner and otherwise fails closed rather
+than returning a User-only subset. No HTTP server,
 background goroutine, environment lookup, database, network client or global
 registration is started by this package.
 

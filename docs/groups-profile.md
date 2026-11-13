@@ -9,8 +9,8 @@ snapshot. `GroupsService.Execute` accepts `GroupCreate`, `GroupGet`, `GroupList`
 `GroupSearch`, `GroupReplace`, `GroupPatch`, `GroupDelete` and matching discovery.
 The service is HTTP-independent: `GroupSearch` corresponds to `Groups/.search`,
 not combined root `.search`. The optional [combined profile](combined-profile.md)
-adds shared discovery and typed resource dispatch; combined root search and
-transport remain separately owned. Bulk, connection lifecycle and password writes remain
+adds shared discovery, typed resource dispatch and optional explicit mixed-
+snapshot root search. Transport remains separately owned. Bulk, connection lifecycle and password writes remain
 unsupported. Existing `NewUsersService`, `Store`, `Mapper`, `ParseFilter` and
 `ParsePatch` retain their User-specific contracts and defaults.
 
@@ -124,6 +124,6 @@ not member Users, nested Groups, teams, identities or memberships. Incoming
 reference cleanup and organization reconciliation/deprovisioning remain adapter
 and lifecycle work, not implicit cascading deletion.
 
-Combined root search, native adapters, HTTP/OpenAPI composition,
+Native adapters, HTTP/OpenAPI composition,
 independent-client full conformance, release qualification and public release
 remain pending. The full SCIM goal and its broader acceptance are retained.

@@ -36,6 +36,12 @@
 
 ### Added
 
+- Opt-in combined root search through one explicit scoped User/Group snapshot
+  owner, with schema-aware filtering, sorting, projection and exact bounded
+  pagination. Existing combined configurations without that owner continue to
+  return 501; existing single-resource APIs are unchanged. This extends the
+  earlier combined composition without inferring a cross-type store snapshot.
+
 - An additive combined User/Group protocol service with one shared authority
   and effective-limit configuration, truthful bounded discovery for both typed
   owners, immutable per-resource extensions and conflicting-schema rejection.

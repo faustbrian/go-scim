@@ -139,6 +139,13 @@ func (s *protocolService) execute(parent context.Context, r Request) (out Respon
 				return Response{}, e
 			}
 		}
+		if r.Operation == Search && s.rootSearch != nil {
+			if r.ResourceID != "" {
+				return Response{}, failure(400, "invalidValue")
+			}
+			out, err = s.rootSearch.search(ctx, c, q)
+			break
+		}
 		p, e := s.planQuery(q)
 		if e != nil {
 			return Response{}, e

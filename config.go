@@ -72,6 +72,7 @@ type protocolService struct {
 	groups                groupDependencies
 	discoveryProfiles     []discoveryProfile
 	rootSearchUnavailable bool
+	rootSearch            *rootSearchProfile
 }
 
 // NewUsersService validates the entire effective runtime/discovery snapshot.
