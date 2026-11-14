@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Document the optional native Groups selection and its typed directory
+  references, without changing root protocol APIs or default Users selection.
+
 - Document the optional PostgreSQL adapter's configured discovery and complete
   Users CRUD/PATCH/query profile, with organization and global deprovisioning
   kept outside that selection. Root protocol APIs remain unchanged.

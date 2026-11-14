@@ -97,8 +97,8 @@ github.com/faustbrian/go-identity/password/postgres v0.0.0-20261028082559-7ca5d4
 github.com/faustbrian/go-identity/password/postgres v0.0.0-20261028082559-7ca5d4db76d2/go.mod h1:RONjPqk90ksuQ4voGAH8SOCCd0SQ/TQWLvu3kvScflw=
 github.com/faustbrian/go-identity/phone v0.0.0-20261020215141-387cc56b91f6 h1:D+H1oYaOCQYGuvltxahVnzZCmVQTd7s5jzdV3RLkrUc=
 github.com/faustbrian/go-identity/phone v0.0.0-20261020215141-387cc56b91f6/go.mod h1:rQXIEiPXU/DMLt80tkafJnol/ayyUHFoS2ya3hVR1nE=
-github.com/faustbrian/go-identity/postgres v0.0.0-20261113190651-2313507238f6 h1:Q3KVIDSUGWRmesE4Cz9CbVng9+67vyZFdsTX5FFueZU=
-github.com/faustbrian/go-identity/postgres v0.0.0-20261113190651-2313507238f6/go.mod h1:ghox2jHyUazXh448mYO5YMi6GVaH909JlPcxg4xxof8=
+github.com/faustbrian/go-identity/postgres v0.0.0-20261113234404-7672e7aa715a h1:Z7Rduo09aGmx9yIK9Ad17IptmUYt+IeXxv2ecNA48bA=
+github.com/faustbrian/go-identity/postgres v0.0.0-20261113234404-7672e7aa715a/go.mod h1:ghox2jHyUazXh448mYO5YMi6GVaH909JlPcxg4xxof8=
 github.com/faustbrian/go-identity/reference v0.0.0-20261018031204-02c6195bd789 h1:AcnrkJ3z7oITrIUc6nSJX3OwLitJek2bRJDRu+eE7SQ=
 github.com/faustbrian/go-identity/reference v0.0.0-20261018031204-02c6195bd789/go.mod h1:O/hmm6Lqqb8SknW6SGEhv+EornZU+sR8KVKCXK5h+uY=
 github.com/faustbrian/go-identity/risk v0.0.0-20261028092233-945b17fc88c4 h1:QQNah/VhUsjqLQ7knO236HHpK/x2gC1m6aPUKTOtFr8=
@@ -135,8 +135,8 @@ github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7 h1:yYXsPB
 github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7/go.mod h1:1BN8d6pyyD063irAOXCGiU6Pr1kCLILnetE1UA6hoow=
 github.com/faustbrian/go-rate-limit/v2 v2.0.1-0.20261015090634-0ebce3975fe1 h1:wClLzW8mUPmV7ilNALEIP0wJZ8LFWjb0nmGKh7LmDGw=
 github.com/faustbrian/go-rate-limit/v2 v2.0.1-0.20261015090634-0ebce3975fe1/go.mod h1:RqjJW3CAgGnotSWzmYuWdBcU1xeupY5F/IhjDXgthyg=
-github.com/faustbrian/go-scim v0.0.0-20261113165244-42747a24d929 h1:pb1xzEskOScFhr1mlvl7HDMEOWXHGP66736U48wvQjA=
-github.com/faustbrian/go-scim v0.0.0-20261113165244-42747a24d929/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
+github.com/faustbrian/go-scim v0.0.0-20261113195101-e97918aba312 h1:uOLqnM0ycrBMwlilaLpS5trEu4Mhwre0mwHFal8AuUQ=
+github.com/faustbrian/go-scim v0.0.0-20261113195101-e97918aba312/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1 h1:1GHj2WZhKZihdhlbsU12o7T5kaA9z7IOy/1RQGu3RhA=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1/go.mod h1:X8VgGx/HsaHif3pNbS6A35sYg3SzF1+8A1YIZMd6Lnw=
 github.com/faustbrian/go-service v1.1.2 h1:8gKlxhILZzn1gQg5edVzRomlqLLaa07e2nC9dZ2rxIM=

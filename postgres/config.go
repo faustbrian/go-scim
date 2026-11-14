@@ -268,7 +268,7 @@ func (s *Service) coordinator(p *nativePhase) (*kernel.Coordinator, *kernel.Cont
 	c := s.config()
 	keys := s.requestKeys(p)
 	var coordinator *kernel.Coordinator
-	if p.intent.Operation == scim.UserDelete && !p.bootstrap {
+	if nativeDelete(p.intent.Operation) && !p.bootstrap {
 		coordinator, err = kernel.NewCoordinatorWithCanonicalRequestKeys(s.pool, registry, c.Coordinator, keys)
 	} else {
 		coordinator, err = kernel.NewCoordinatorWithRequestKeys(s.pool, registry, c.Coordinator, keys)
@@ -278,7 +278,7 @@ func (s *Service) coordinator(p *nativePhase) (*kernel.Coordinator, *kernel.Cont
 
 func (s *Service) requestKeys(p *nativePhase) kernel.RequestKeyConfig {
 	keys := s.config().RequestKeys
-	if p != nil && p.intent.Operation == scim.UserDelete && !p.bootstrap {
+	if p != nil && nativeDelete(p.intent.Operation) && !p.bootstrap {
 		// Same private lookup custody and journal, distinct trusted namespace
 		// mode. A protocol selector is never an invented client retry header.
 		keys.Namespace += "-canonical-delete-v1"

@@ -5,8 +5,10 @@ Go 1.27. This is an unreleased implementation, not a turnkey provisioning backen
 verified release, or completion of the wider SCIM unit. The optional
 [PostgreSQL adapter](postgres/README.md) selects configured, authorized discovery
 and Users create/get/replace/PATCH/delete/list/search through the actual identity
-and authority owners. Groups, organization reconciliation, global deprovisioning
-and the native connection-management lifecycle remain separate work.
+and authority owners. Its separately selected native Groups service provides
+directory CRUD/query, typed same-connection member references and original retry
+recovery without changing the default Users service. Organization reconciliation,
+global deprovisioning and native connection management remain separate work.
 
 ## Durable command admission
 

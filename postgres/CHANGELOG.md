@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an explicitly selected native Groups profile with authenticated discovery,
+  complete CRUD/filter/search/pagination, atomic typed same-connection member
+  validation, ETag/no-op/CAS and retained original retries through the existing
+  kernel journal. Install the additive Groups migration before activation.
+  Existing Users selection stays unchanged; Groups are projections/references,
+  not authoritative teams, roles, identity creation or organization reconciliation.
 - Add authorized native discovery and complete scoped Users CRUD, filtering,
   search and pagination over the existing protocol and PostgreSQL owners.
   Install the forward Users metadata migration and the kernel status/canonical

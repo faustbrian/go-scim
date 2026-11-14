@@ -92,34 +92,52 @@ func (p *nativePhase) newOriginalInput(ctx context.Context, command identity.Com
 	if p.bootstrap {
 		return input, nil
 	}
-	if p.intent.Operation != "" && p.intent.Operation != scim.UserCreate {
+	if p.group() {
+		input.Schema, input.Operation = 3, p.intent.Operation
+	}
+	if p.intent.Operation != "" && !nativeCreate(p.intent.Operation) {
 		if !nativeMutation(p.intent.Operation) {
 			return originalInput{}, identity.ForbiddenError{}
 		}
 		if p.intent.ResourceID == "" || len(p.intent.ResourceID) > 128 || !utf8.ValidString(p.intent.ResourceID) {
 			return originalInput{}, identity.InvalidInputError{Field: "scim_resource_id"}
 		}
-		input.Schema, input.Operation, input.ID = 2, p.intent.Operation, p.intent.ResourceID
-		current, err := (&protocolBridge{service: p.service}).Get(ctx, p.intent.Scope, p.intent.ResourceID)
+		input.Operation, input.ID = p.intent.Operation, p.intent.ResourceID
+		if !p.group() {
+			input.Schema = 2
+		}
+		bridge := &protocolBridge{service: p.service, groups: p.group()}
+		read := bridge.Get
+		if p.group() {
+			read = bridge.GetGroup
+		}
+		current, err := read(ctx, p.intent.Scope, p.intent.ResourceID)
 		if err != nil && !errors.Is(err, scim.ErrNotFound) {
 			return originalInput{}, err
 		}
 		if err == nil {
-			status, err := p.service.directory.GetStatus(ctx, identity.UserStatusQuery{TenantID: p.intent.Scope.TenantID, UserID: identity.UserID(input.ID)})
-			if err != nil || status.User.Status != identity.StatusActive {
-				return originalInput{}, identity.ForbiddenError{}
+			if !p.group() {
+				status, err := p.service.directory.GetStatus(ctx, identity.UserStatusQuery{TenantID: p.intent.Scope.TenantID, UserID: identity.UserID(input.ID)})
+				if err != nil || status.User.Status != identity.StatusActive {
+					return originalInput{}, identity.ForbiddenError{}
+				}
+				input.KernelVersion, input.UserAuthority = status.User.Version, status.AuthorityVersion
 			}
 			wire, err := json.Marshal(current)
 			if err != nil || len(wire) > 131072 {
 				return originalInput{}, identity.UnavailableError{}
 			}
 			args := append(scopeArgs(p.intent.Scope), input.ID, wire)
-			err = p.service.pool.Raw().QueryRow(ctx, `SELECT generation FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND resource=$6 AND deleted_at IS NULL`, args...).Scan(&input.Generation)
+			query := `SELECT generation FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND resource=$6 AND deleted_at IS NULL`
+			if p.group() {
+				query = `SELECT generation FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND resource=$6 AND deleted_at IS NULL`
+			}
+			err = p.service.pool.Raw().QueryRow(ctx, query, args...).Scan(&input.Generation)
 			clear(wire)
 			if err != nil || input.Generation < 1 {
 				return originalInput{}, identity.UnavailableError{}
 			}
-			input.Current, input.KernelVersion, input.UserAuthority = &current, status.User.Version, status.AuthorityVersion
+			input.Current = &current
 			if input.At.Before(current.LastModified) {
 				input.At = current.LastModified
 			}
@@ -161,7 +179,7 @@ func (p *nativePhase) restoreOriginal(ctx context.Context, b kernel.RequestKeyPr
 	}
 	defer clear(plain)
 	var input originalInput
-	if len(plain) > originalPlaintextBytes || json.Unmarshal(plain, &input) != nil || input.Schema != 1 && input.Schema != 2 || input.Command != b.Admission.CommandID || input.Profile != p.service.profile || input.At.IsZero() || input.At.Year() < 1 || input.At.Year() > 9999 || !input.At.Equal(input.At.Truncate(time.Microsecond)) {
+	if len(plain) > originalPlaintextBytes || json.Unmarshal(plain, &input) != nil || input.Schema != 1 && input.Schema != 2 && input.Schema != 3 || input.Command != b.Admission.CommandID || input.Profile != p.service.profile || input.At.IsZero() || input.At.Year() < 1 || input.At.Year() > 9999 || !input.At.Equal(input.At.Truncate(time.Microsecond)) {
 		return originalInput{}, identity.UnavailableError{}
 	}
 	if _, err := p.service.restoreAdmission(input.Admission, input.At); err != nil {
@@ -172,6 +190,15 @@ func (p *nativePhase) restoreOriginal(ctx context.Context, b kernel.RequestKeyPr
 			return originalInput{}, identity.UnavailableError{}
 		}
 		return input, nil
+	}
+	if p.group() {
+		if err := p.validateGroupOriginal(input); err != nil {
+			return originalInput{}, err
+		}
+		return input, nil
+	}
+	if input.Schema == 3 {
+		return originalInput{}, identity.UnavailableError{}
 	}
 	if input.Schema == 1 {
 		if p.intent.Operation != "" && p.intent.Operation != scim.UserCreate || input.Operation != "" || input.Current != nil || input.KernelVersion != 0 || input.UserAuthority != 0 || input.Generation != 0 {
@@ -245,7 +272,7 @@ func (p *nativePhase) resolveOriginal(ctx context.Context, key string, canonical
 	caller := p.service.caller(scope.RouteID, scope.RouteID, "identity.request-admission")
 	var binding kernel.RequestKeyPreparationBinding
 	var wire []byte
-	if p.intent.Operation == scim.UserDelete && !p.bootstrap {
+	if nativeDelete(p.intent.Operation) && !p.bootstrap {
 		// Stable DELETE identity is connection/route/target/If-Match, not the
 		// entire canonical request. Query changes remain full-intent conflicts
 		// against that one original, never permission to allocate another one.
@@ -302,7 +329,7 @@ func (p *nativePhase) resolveOriginal(ctx context.Context, key string, canonical
 }
 
 func nativeMutation(op scim.Operation) bool {
-	return op == scim.UserReplace || op == scim.UserPatch || op == scim.UserDelete
+	return op == scim.UserReplace || op == scim.UserPatch || op == scim.UserDelete || op == scim.GroupReplace || op == scim.GroupPatch || op == scim.GroupDelete
 }
 
 func nativeVersion(version scim.Version) bool {
@@ -316,11 +343,11 @@ func nativeVersion(version scim.Version) bool {
 func (p *nativePhase) method() string {
 	if !p.bootstrap {
 		switch p.intent.Operation {
-		case scim.UserReplace:
+		case scim.UserReplace, scim.GroupReplace:
 			return "PUT"
-		case scim.UserPatch:
+		case scim.UserPatch, scim.GroupPatch:
 			return "PATCH"
-		case scim.UserDelete:
+		case scim.UserDelete, scim.GroupDelete:
 			return "DELETE"
 		}
 	}

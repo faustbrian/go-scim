@@ -35,7 +35,7 @@ func (*nativePhase) Descriptor() kernel.ContributorDescriptor {
 	return kernel.ContributorDescriptor{Owner: "scim/postgres", ContractID: "identity.scim", Version: 1}
 }
 func (*nativePhase) FeatureOperations() []identity.FeatureOperation {
-	return []identity.FeatureOperation{userOperation(), connectionOperation(), mutationOperation(scim.UserReplace), mutationOperation(scim.UserPatch), mutationOperation(scim.UserDelete)}
+	return []identity.FeatureOperation{userOperation(), connectionOperation(), mutationOperation(scim.UserReplace), mutationOperation(scim.UserPatch), mutationOperation(scim.UserDelete), mutationOperation(scim.GroupCreate), mutationOperation(scim.GroupReplace), mutationOperation(scim.GroupPatch), mutationOperation(scim.GroupDelete)}
 }
 func userOperation() identity.FeatureOperation {
 	return identity.FeatureOperation{Owner: "scim", OperationID: string(scim.UserCreate), SchemaID: "identity.scim.user-create.native-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
@@ -45,7 +45,7 @@ func connectionOperation() identity.FeatureOperation {
 }
 func mutationOperation(op scim.Operation) identity.FeatureOperation {
 	operation := identity.FeatureOperation{Owner: "scim", OperationID: string(op), SchemaID: string(op) + ".native-v1", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired}
-	if op == scim.UserPatch {
+	if nativePatch(op) {
 		operation.VersionPolicy = identity.FeatureVersionSequentialOrUnchanged
 	}
 	return operation
@@ -66,6 +66,9 @@ func (p *nativePhase) subjectType() string {
 	if p.bootstrap {
 		return "scim_connection"
 	}
+	if p.group() {
+		return "scim_group"
+	}
 	return "scim_user"
 }
 func (p *nativePhase) eventType() string {
@@ -82,12 +85,23 @@ func (p *nativePhase) eventType() string {
 		return "identity.scim.user_patched.v1"
 	case scim.UserDelete:
 		return "identity.scim.user_deleted.v1"
+	case scim.GroupCreate:
+		return "identity.scim.group_created.v1"
+	case scim.GroupReplace:
+		return "identity.scim.group_replaced.v1"
+	case scim.GroupPatch:
+		if p.noOpPatch() {
+			return "identity.scim.group_patch_noop.v1"
+		}
+		return "identity.scim.group_patched.v1"
+	case scim.GroupDelete:
+		return "identity.scim.group_deleted.v1"
 	}
 	return "identity.scim.user_created.v1"
 }
 
 func (p *nativePhase) noOpPatch() bool {
-	return p.intent.Operation == scim.UserPatch && p.original.Current != nil && p.resource.Version == p.original.Current.Version
+	return nativePatch(p.intent.Operation) && p.original.Current != nil && p.resource.Version == p.original.Current.Version
 }
 
 func (p *nativePhase) lifecycle() kernel.LifecyclePlan {
@@ -108,7 +122,7 @@ func (p *nativePhase) lifecycle() kernel.LifecyclePlan {
 func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 	c, op := p.service.config(), p.operation()
 	id := p.original.ID
-	if p.bootstrap {
+	if p.bootstrap || p.group() {
 		id = string(c.ActorID)
 	}
 	record := p.original.ID
@@ -137,7 +151,7 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 		digest := sha256.Sum256(original)
 		clear(original)
 		fields = append(fields, identity.FeatureField{Name: "scim.original", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: digest[:]}})
-		if p.intent.Operation != scim.UserDelete {
+		if !p.group() && p.intent.Operation != scim.UserDelete {
 			attributes, err := p.prepareChangedAttributes(ctx)
 			if err != nil {
 				return err
@@ -149,7 +163,7 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 			}
 			fields = append(fields, updateFields...)
 		}
-	} else if !p.bootstrap {
+	} else if !p.bootstrap && !p.group() {
 		creationBinding := b
 		creationBinding.OperationID = "identity.user.create"
 		creationBinding.SchemaID = c.FieldSchema.ID
@@ -169,6 +183,11 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 			return err
 		}
 		fields = append(fields, creationFields...)
+		fields = append(fields,
+			identity.FeatureField{Name: "scim.resource.version", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: string(p.original.Version)}},
+			identity.FeatureField{Name: "scim.resource.created-at", Value: identity.FeatureValue{Kind: identity.FeatureTime, Time: p.original.At}},
+		)
+	} else if p.group() {
 		fields = append(fields,
 			identity.FeatureField{Name: "scim.resource.version", Value: identity.FeatureValue{Kind: identity.FeatureText, Text: string(p.original.Version)}},
 			identity.FeatureField{Name: "scim.resource.created-at", Value: identity.FeatureValue{Kind: identity.FeatureTime, Time: p.original.At}},
@@ -220,6 +239,8 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		if count != 1 {
 			return identity.FeatureReceipt{}, identity.ConflictError{}
 		}
+	} else if p.group() {
+		return p.applyGroupProjection(ctx, w)
 	} else if nativeMutation(p.intent.Operation) {
 		if err := p.requireOriginalProjection(ctx, w); err != nil {
 			return identity.FeatureReceipt{}, err
@@ -323,7 +344,7 @@ func (p *nativePhase) checkCurrent(ctx context.Context, w kernel.Work) error {
 			return err
 		}
 	}
-	if nativeMutation(p.intent.Operation) {
+	if nativeMutation(p.intent.Operation) && !p.group() {
 		if err := w.RequireActiveUserStatus(ctx, p, p.originalUserStatus()); err != nil {
 			return err
 		}
@@ -400,6 +421,8 @@ func (p *nativePhase) RecoverParticipant(ctx context.Context, w kernel.RecoveryW
 	sql := `SELECT effect_digest FROM scim.users WHERE command_id=$1`
 	if p.bootstrap {
 		sql = `SELECT effect_digest FROM scim.connections WHERE command_id=$1`
+	} else if p.group() {
+		sql = `SELECT effect_digest FROM scim.groups WHERE command_id=$1`
 	}
 	rows, err := w.Query(ctx, sql, string(b.CommandID))
 	if err != nil {

@@ -19,7 +19,10 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 	// Only Execute mints this private invocation. The root has already bounded
 	// the body/query before canonicalization; several valid PATCH operations
 	// can exceed the separate 128 KiB final-resource/original-Current budget.
-	if intent.Operation == scim.UserCreate {
+	if groupOperation(intent.Operation) != b.groups {
+		return scim.PreparedWrite{}, identity.ForbiddenError{}
+	}
+	if nativeCreate(intent.Operation) {
 		if intent.ResourceID != "" || intent.IfMatch != "" {
 			return scim.PreparedWrite{}, identity.ForbiddenError{}
 		}
@@ -27,7 +30,7 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 		return scim.PreparedWrite{}, identity.ForbiddenError{}
 	}
 	p := &nativePhase{service: b.service, admission: *i, intent: intent}
-	if intent.IdempotencyKey == "" && intent.Operation != scim.UserDelete {
+	if intent.IdempotencyKey == "" && !nativeDelete(intent.Operation) {
 		// Pure mapping needs no durable entropy preparation. Keep the root's
 		// original proposal command and invocation-only metadata; Commit still
 		// uses the same authoritative reservation/Work/journal as keyed creates.
@@ -54,7 +57,7 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 			return scim.PreparedWrite{}, err
 		}
 		prepared := scim.PreparedWrite{Intent: intent, Current: current}
-		if current != nil && intent.Operation != scim.UserDelete {
+		if current != nil && !nativeDelete(intent.Operation) {
 			prepared.UpdateMetadata = &scim.UpdateMetadata{Version: p.original.Version, LastModified: p.original.At}
 		}
 		return prepared, nil
@@ -98,10 +101,10 @@ func (b *protocolBridge) Commit(ctx context.Context, prepared scim.PreparedWrite
 	if actual.CommandID != expected.CommandID || actual.Scope != expected.Scope || actual.Connection != expected.Connection || actual.Operation != expected.Operation || actual.ResourceID != expected.ResourceID || actual.IfMatch != expected.IfMatch || actual.IdempotencyKey != expected.IdempotencyKey || !bytes.Equal(actual.CanonicalRequest, expected.CanonicalRequest) || prepared.Replay != nil || !liveConnection(ctx, i.connection) {
 		return scim.WriteResult{}, identity.ForbiddenError{}
 	}
-	if actual.Operation == scim.UserDelete {
+	if nativeDelete(actual.Operation) {
 		return b.commitDelete(ctx, p, prepared, change)
 	}
-	if actual.Operation == scim.UserReplace || actual.Operation == scim.UserPatch {
+	if nativeMutation(actual.Operation) {
 		return b.commitUpdate(ctx, p, prepared, change)
 	}
 	if prepared.Current != nil || prepared.UpdateMetadata != nil || change.Delete || change.Resource == nil || prepared.CreateMetadata == nil {
@@ -118,7 +121,7 @@ func (b *protocolBridge) Commit(ctx context.Context, prepared scim.PreparedWrite
 	if json.Unmarshal(wire, &p.resource) != nil {
 		return scim.WriteResult{}, identity.UnavailableError{}
 	}
-	if _, ok := p.resource.Attributes["userName"].(string); !ok {
+	if _, ok := p.resource.Attributes["userName"].(string); !ok && !p.group() {
 		return scim.WriteResult{}, identity.InvalidInputError{Field: "scim_username"}
 	}
 	if err := p.initialize(ctx, actual.CanonicalRequest); err != nil {
@@ -154,7 +157,7 @@ func (b *protocolBridge) commitUpdate(ctx context.Context, p *nativePhase, prepa
 	if resource.Version == current.Version {
 		// Equal metadata is accepted only for the root's exact unchanged PATCH.
 		// A reused ETag may never disguise a changed projection/core mutation.
-		if p.intent.Operation != scim.UserPatch || !bytes.Equal(original, wire) {
+		if !nativePatch(p.intent.Operation) || !bytes.Equal(original, wire) {
 			return scim.WriteResult{}, identity.ForbiddenError{}
 		}
 	} else if resource.Version != p.original.Version || !resource.LastModified.Equal(p.original.At) {
@@ -163,8 +166,10 @@ func (b *protocolBridge) commitUpdate(ctx context.Context, p *nativePhase, prepa
 	if json.Unmarshal(wire, &p.resource) != nil {
 		return scim.WriteResult{}, identity.UnavailableError{}
 	}
-	if _, err := mappedString(p.resource.Attributes, "userName"); err != nil {
-		return scim.WriteResult{}, err
+	if !p.group() {
+		if _, err := mappedString(p.resource.Attributes, "userName"); err != nil {
+			return scim.WriteResult{}, err
+		}
 	}
 	if err := p.initialize(ctx, prepared.Intent.CanonicalRequest); err != nil {
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, err
@@ -223,9 +228,11 @@ func (b *protocolBridge) commitDelete(ctx context.Context, p *nativePhase, prepa
 		// A historical ACK requires this invocation's genuine current authority,
 		// including actual kernel eligibility, but never the deleted SCIM
 		// projection, which may have expired already.
-		user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(p.original.ID)})
-		if err != nil || user.Status != identity.StatusActive {
-			return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, identity.ForbiddenError{}
+		if !p.group() {
+			user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(p.original.ID)})
+			if err != nil || user.Status != identity.StatusActive {
+				return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, identity.ForbiddenError{}
+			}
 		}
 		if err := b.service.recheckRead(ctx, &p.admission); err != nil {
 			return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, err
@@ -265,13 +272,19 @@ func featureFailure(result identity.CommandResult, err error) (error, bool) {
 		return scim.ErrPreconditionFailed, true
 	case kernel.FeatureFailureConflict:
 		return scim.ErrConflict, true
+	case kernel.FeatureFailureInvalidGroupMember:
+		operation := scim.Operation(result.Binding.OperationID)
+		if !groupOperation(operation) || !nativeCreate(operation) && !nativeMutation(operation) || result.Feature == nil || result.Feature.Operation != mutationOperation(operation) {
+			return identity.UnavailableError{}, true
+		}
+		return scim.ErrInvalidGroupMember, true
 	default:
 		return identity.UnavailableError{}, true
 	}
 }
 
 func (b *protocolBridge) recheckFailureDisclosure(ctx context.Context, p *nativePhase) error {
-	if nativeMutation(p.intent.Operation) {
+	if nativeMutation(p.intent.Operation) && !p.group() {
 		user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(p.original.ID)})
 		if err != nil || user.Status != identity.StatusActive {
 			return identity.ForbiddenError{}
@@ -292,9 +305,11 @@ func (b *protocolBridge) readOriginal(ctx context.Context, p *nativePhase) (scim
 	if err != nil || resource == nil || resource.ID != p.original.ID {
 		return scim.Resource{}, identity.UnavailableError{}
 	}
-	user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(resource.ID)})
-	if err != nil || user.Status != identity.StatusActive {
-		return scim.Resource{}, identity.ForbiddenError{}
+	if !p.group() {
+		user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(resource.ID)})
+		if err != nil || user.Status != identity.StatusActive {
+			return scim.Resource{}, identity.ForbiddenError{}
+		}
 	}
 	// A retained committed receipt skips Apply's original-authority fences.
 	// Disclosure therefore requires this invocation's genuine current owners,

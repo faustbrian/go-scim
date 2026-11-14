@@ -31,7 +31,10 @@ type invocation struct {
 	phase        *nativePhase
 }
 
-type protocolBridge struct{ service *Service }
+type protocolBridge struct {
+	service *Service
+	groups  bool
+}
 
 // Execute runs the configured native Users protocol; Groups and Bulk return 501.
 // A supplied idempotency key selects scoped original replay. Headerless creates
@@ -46,6 +49,10 @@ func (s *Service) Execute(ctx context.Context, r scim.Request) (response scim.Re
 	if !nativeOperation(r.Operation) {
 		return response, scim.NewError(501, "")
 	}
+	return s.executeProtocol(ctx, r, s.protocol.Execute)
+}
+
+func (s *Service) executeProtocol(ctx context.Context, r scim.Request, execute func(context.Context, scim.Request) (scim.Response, error)) (response scim.Response, err error) {
 	ctx, cancel := context.WithTimeout(ctx, s.config().MaximumDuration)
 	defer cancel()
 	defer func() {
@@ -58,7 +65,7 @@ func (s *Service) Execute(ctx context.Context, r scim.Request) (response scim.Re
 			err = scim.NewError(503, "")
 		}
 	}()
-	response, rootErr := s.protocol.Execute(context.WithValue(ctx, invocationKey{}, new(invocation)), r)
+	response, rootErr := execute(context.WithValue(ctx, invocationKey{}, new(invocation)), r)
 	if rootErr != nil {
 		var protocolError *scim.Error
 		if errors.As(rootErr, &protocolError) && protocolError != nil {
@@ -142,10 +149,15 @@ func (s *Service) decide(ctx context.Context, operation, target, resourceType st
 
 func (b *protocolBridge) Authorize(ctx context.Context, c scim.Connection, op scim.Operation, target string) error {
 	i, err := currentInvocation(ctx)
-	if err != nil || c != i.connection || !liveConnection(ctx, c) || !nativeOperation(op) {
+	selected := nativeOperation(op)
+	kind := "identity.scim.user"
+	if b.groups {
+		selected, kind = nativeGroupOperation(op), "identity.scim.group"
+	}
+	if err != nil || c != i.connection || !liveConnection(ctx, c) || !selected {
 		return identity.ForbiddenError{}
 	}
-	return b.service.decide(ctx, string(op), target, "identity.scim.user")
+	return b.service.decide(ctx, string(op), target, kind)
 }
 
 func nativeOperation(op scim.Operation) bool {

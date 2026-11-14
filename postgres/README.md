@@ -1,4 +1,4 @@
-# Native SCIM configured Users
+# Native SCIM configured Users and Groups
 
 `github.com/faustbrian/go-scim/postgres` composes the public SCIM protocol with
 the existing PostgreSQL identity, organization, authorization, audit and
@@ -25,7 +25,9 @@ SCIM projection data. They do not create verified identifiers, suspend or restor
 a global user, or change organization membership. SCIM `externalId` remains byte-exact, nonunique
 connection correlation; it never selects or links an existing identity.
 
-The service returns 501 for Groups and Bulk.
+The original `Service` remains Users-only and returns 501 for Groups and Bulk.
+The separately selected `GroupsService` exposes only Groups and their discovery;
+it returns 501 for Users, combined root search, Bulk and connection lifecycle.
 Organization membership mapping, SSO synchronization, HTTP routing and native
 connection lifecycle remain separate work. DELETE removes only this connection's
 SCIM projection; it does not delete the global kernel user. Credential/password
@@ -87,6 +89,55 @@ _ = created // detached SCIM JSON, Location and ETag
 These names refer to trusted deployment values, not an alternative application
 implementation of authentication or persistence. The complete compiled native
 consumer is in the integration tests and uses genuine owner schemas/adapters.
+
+### Explicit Groups selection
+
+Append `GroupsMigrationSource{Base: usersHistory, Version: permanentGroupsVersion}`
+after the installed Users history, using the same migration runner. This adds
+one empty `scim.groups` table; it changes no identity, organization or existing
+User data. Run it before routing any Groups operation to the new profile. The
+older Users service remains usable without selecting or advertising Groups.
+
+```go
+groups, err := scimpostgres.NewGroupsService(service, scim.DefaultGroupMembers)
+if err != nil { return err }
+createdGroup, err := groups.Execute(ctx, scim.Request{
+    Operation: scim.GroupCreate,
+    Credential: bearer,
+    ContentType: "application/scim+json",
+    IdempotencyKey: clientRetryKey,
+    Body: groupDocument,
+})
+if err != nil { return err }
+_ = createdGroup
+```
+
+`maximumMembers` is explicit: zero allows only empty Groups; the reference
+ceiling is 10,000, further constrained by the runtime's body/attribute budgets
+and the native 128 KiB stored-resource ceiling. Group names and `externalId`
+are not unique. Use a retry key to retain a Group creation: a repeated
+headerless create is a new command and may create another Group with the same
+name. Headerless Group DELETE uses the existing canonical command owner and
+retains its original empty response independently of tombstone retention.
+
+The root `GroupMapper` is pure representation. At commit, the native store
+checks every exact member ID and declared User/Group type in the same complete
+connection partition, under the same connection lock used by User and Group
+writers. A URI is not existence proof. Missing, deleted, wrong-type or
+cross-connection members deny the entire change with a redacted `invalidValue`
+result retained by the kernel. No partial member update commits. Nested Groups
+are references only: they are not traversed, remotely fetched or treated as
+team/role/organization authority. Reference cycles are permitted; deleting a
+Group changes no member or referring resource, so retained references can
+become dangling. Group Get does not follow those references.
+
+Group writes atomically commit only their projection/generation, real audit,
+outbox and kernel result. They do not create a kernel user, change global user
+status, reconcile organization membership or implement SSO synchronization.
+Group PATCH no-op preserves the resource, ETag, time and generation while
+recording its accepted audit/outbox; effective updates use exact native CAS.
+Original success and failure replay, uncertain COMMIT handling and current
+authority checks use the same owners as Users, not a Group outcome journal.
 
 ## Transaction and retry semantics
 
@@ -197,8 +248,9 @@ instead of resurrecting it. No destructive down migration is provided.
 
 List/search uses the root protocol's complete bounded fallback, not a second SQL
 filter engine. A read-only repeatable-read transaction preflights resource/byte
-budgets before decoding and returns one complete scoped snapshot with actual
-kernel eligibility. Exhaustion denies the whole query, even `count=0`; it never
+budgets before decoding and returns one complete scoped snapshot. Users also
+check actual kernel eligibility; Groups never infer a kernel identity from a
+Group ID. Exhaustion denies the whole query, even `count=0`; it never
 returns a partial total. These budgets bound materialized live resources, not
 rows examined: retained tombstones can require broad index or table scans.
 Deployments must choose budgets and retention appropriate to their connection

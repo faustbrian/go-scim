@@ -127,6 +127,47 @@ func sealOriginalInput(t testing.TB, p *nativePhase, binding kernel.RequestKeyPr
 	return wire
 }
 
+func groupPreparationCodec(t testing.TB) (*nativePhase, kernel.RequestKeyPreparationBinding, originalInput) {
+	t.Helper()
+	p, binding, input := mutationPreparationCodec(t)
+	input.Schema, input.Operation = 3, scim.GroupPatch
+	input.KernelVersion, input.UserAuthority = 0, 0
+	input.Current.Schemas = []string{"urn:ietf:params:scim:schemas:core:2.0:Group"}
+	input.Current.Attributes = map[string]any{"displayName": "Original group"}
+	p.intent.Operation = scim.GroupPatch
+	binding.Scope.RouteID, binding.Feature = p.operation().OperationID, p.registration()
+	return p, binding, input
+}
+
+func TestGroupOriginalMetadataCannotAcquireUserOrOtherOperationCustody(t *testing.T) {
+	p, binding, input := groupPreparationCodec(t)
+	wire := sealOriginalInput(t, p, binding, input)
+	got, err := p.restoreOriginal(context.Background(), binding, wire)
+	if err != nil || got.Schema != 3 || got.Current == nil || got.KernelVersion != 0 || got.UserAuthority != 0 || got.Generation != 3 {
+		t.Fatal("typed Group original lost", err)
+	}
+	for _, change := range []func(*originalInput){
+		func(i *originalInput) { i.Schema = 2 },
+		func(i *originalInput) { i.Operation = scim.UserPatch },
+		func(i *originalInput) { i.Operation = scim.GroupReplace },
+		func(i *originalInput) { i.KernelVersion = 1 },
+		func(i *originalInput) { i.UserAuthority = 1 },
+		func(i *originalInput) { i.Generation = 0 },
+		func(i *originalInput) { i.Current = nil },
+	} {
+		changed := input
+		change(&changed)
+		if _, err := p.restoreOriginal(context.Background(), binding, sealOriginalInput(t, p, binding, changed)); err == nil {
+			t.Fatal("changed Group custody admitted")
+		}
+	}
+	p.intent.Operation = scim.UserPatch
+	binding.Scope.RouteID, binding.Feature = p.operation().OperationID, p.registration()
+	if _, err := p.restoreOriginal(context.Background(), binding, sealOriginalInput(t, p, binding, input)); err == nil {
+		t.Fatal("Group original became User custody")
+	}
+}
+
 func TestMutationOriginalMetadataRetainsBoundedDetachedProjection(t *testing.T) {
 	p, binding, input := mutationPreparationCodec(t)
 	wire := sealOriginalInput(t, p, binding, input)
@@ -163,8 +204,10 @@ func TestMutationOriginalMetadataRetainsBoundedDetachedProjection(t *testing.T) 
 func FuzzOriginalMetadataEnvelope(f *testing.F) {
 	p, b, wire := preparationCodec(f)
 	mutation, mutationBinding, mutationInput := mutationPreparationCodec(f)
+	group, groupBinding, groupInput := groupPreparationCodec(f)
 	f.Add(wire)
 	f.Add(sealOriginalInput(f, mutation, mutationBinding, mutationInput))
+	f.Add(sealOriginalInput(f, group, groupBinding, groupInput))
 	f.Add([]byte{})
 	f.Add([]byte("invalid envelope"))
 	f.Fuzz(func(t *testing.T, input []byte) {
@@ -174,9 +217,9 @@ func FuzzOriginalMetadataEnvelope(f *testing.F) {
 		for _, codec := range []struct {
 			phase   *nativePhase
 			binding kernel.RequestKeyPreparationBinding
-		}{{p, b}, {mutation, mutationBinding}} {
+		}{{p, b}, {mutation, mutationBinding}, {group, groupBinding}} {
 			got, err := codec.phase.restoreOriginal(context.Background(), codec.binding, input)
-			if err == nil && (got.Command != codec.binding.Admission.CommandID || got.Profile != codec.phase.service.profile || got.ID == "" || codec.phase == mutation && (got.Schema != 2 || got.Current == nil || got.KernelVersion == 0 || got.UserAuthority == 0 || got.Generation < 1)) {
+			if err == nil && (got.Command != codec.binding.Admission.CommandID || got.Profile != codec.phase.service.profile || got.ID == "" || codec.phase == mutation && (got.Schema != 2 || got.Current == nil || got.KernelVersion == 0 || got.UserAuthority == 0 || got.Generation < 1) || codec.phase == group && (got.Schema != 3 || got.Current == nil || got.KernelVersion != 0 || got.UserAuthority != 0 || got.Generation < 1)) {
 				t.Fatal("invalid protected input admitted")
 			}
 		}

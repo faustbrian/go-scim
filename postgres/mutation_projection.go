@@ -27,7 +27,11 @@ func (p *nativePhase) recoverOriginalProjection(ctx context.Context, w kernel.Re
 		return kernel.RecoveryUnknown, nil
 	}
 	args := append(scopeArgs(p.service.config().Scope), p.original.ID)
-	rows, err := w.Query(ctx, `SELECT generation,resource,deleted_at FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR SHARE`, args...)
+	query := `SELECT generation,resource,deleted_at FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR SHARE`
+	if p.group() {
+		query = `SELECT generation,resource,deleted_at FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR SHARE`
+	}
+	rows, err := w.Query(ctx, query, args...)
 	if err != nil {
 		return kernel.RecoveryUnknown, err
 	}
@@ -66,7 +70,11 @@ func (p *nativePhase) requireOriginalProjection(ctx context.Context, w kernel.Wo
 		return err
 	}
 	args := append(scopeArgs(p.service.config().Scope), p.original.ID)
-	rows, err := w.Query(ctx, `SELECT generation,resource,deleted_at FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR UPDATE`, args...)
+	query := `SELECT generation,resource,deleted_at FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR UPDATE`
+	if p.group() {
+		query = `SELECT generation,resource,deleted_at FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR UPDATE`
+	}
+	rows, err := w.Query(ctx, query, args...)
 	if err != nil {
 		return identity.UnavailableError{}
 	}

@@ -35,7 +35,7 @@ type nativeFaultConn struct {
 }
 
 func (c *nativeFaultConn) Write(wire []byte) (int, error) {
-	selected := bytes.Contains(wire, []byte("INSERT INTO scim.users(")) || bytes.Contains(wire, []byte("UPDATE scim.users SET"))
+	selected := bytes.Contains(wire, []byte("INSERT INTO scim.users(")) || bytes.Contains(wire, []byte("UPDATE scim.users SET")) || bytes.Contains(wire, []byte("INSERT INTO scim.groups(")) || bytes.Contains(wire, []byte("UPDATE scim.groups SET"))
 	if c.fault.reservation {
 		selected = bytes.Contains(wire, []byte("INSERT INTO identity.commands("))
 	}

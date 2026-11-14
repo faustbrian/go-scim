@@ -35,9 +35,15 @@ func (b *protocolBridge) Snapshot(ctx context.Context, scope scim.Scope, budget 
 	}()
 	args := append(scopeArgs(scope), budget.Resources+1)
 	var count, bytes int64
-	err = tx.QueryRow(ctx, `SELECT count(*),COALESCE(sum(octet_length(resource)),0)::bigint FROM (
+	preflight := `SELECT count(*),COALESCE(sum(octet_length(resource)),0)::bigint FROM (
  SELECT resource FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND deleted_at IS NULL ORDER BY resource_id LIMIT $5
-) AS bounded_snapshot`, args...).Scan(&count, &bytes)
+) AS bounded_snapshot`
+	if b.groups {
+		preflight = `SELECT count(*),COALESCE(sum(octet_length(resource)),0)::bigint FROM (
+ SELECT resource FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND deleted_at IS NULL ORDER BY resource_id LIMIT $5
+) AS bounded_snapshot`
+	}
+	err = tx.QueryRow(ctx, preflight, args...).Scan(&count, &bytes)
 	if err != nil || count < 0 || bytes < 0 {
 		return scim.Snapshot{}, identity.UnavailableError{}
 	}
@@ -50,9 +56,13 @@ func (b *protocolBridge) Snapshot(ctx context.Context, scope scim.Scope, budget 
 		}
 		return scim.Snapshot{Complete: false}, nil
 	}
-	rows, err := tx.Query(ctx, `SELECT s.resource_id,s.user_id,s.resource,u.status FROM scim.users s
+	query := `SELECT s.resource_id,s.user_id,s.resource,u.status FROM scim.users s
  JOIN identity.users u ON u.tenant_id=s.tenant_id AND u.user_id=s.user_id
- WHERE s.tenant_id=$1 AND s.organization_id=$2 AND s.provider_id=$3 AND s.connection_id=$4 AND s.deleted_at IS NULL ORDER BY s.resource_id`, scopeArgs(scope)...)
+ WHERE s.tenant_id=$1 AND s.organization_id=$2 AND s.provider_id=$3 AND s.connection_id=$4 AND s.deleted_at IS NULL ORDER BY s.resource_id`
+	if b.groups {
+		query = `SELECT resource_id,''::text,resource,''::text FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND deleted_at IS NULL ORDER BY resource_id`
+	}
+	rows, err := tx.Query(ctx, query, scopeArgs(scope)...)
 	if err != nil {
 		return scim.Snapshot{}, identity.UnavailableError{}
 	}
@@ -65,7 +75,7 @@ func (b *protocolBridge) Snapshot(ctx context.Context, scope scim.Scope, budget 
 		if rows.Scan(&id, &user, &wire, &status) != nil || len(resources) >= int(count) || len(wire) > 131072 || int64(len(wire)) > remaining {
 			return scim.Snapshot{}, identity.UnavailableError{}
 		}
-		if _, err := identity.ParseSubjectID(id); err != nil || user != id || status != string(identity.StatusActive) {
+		if _, err := identity.ParseSubjectID(id); err != nil || !b.groups && (user != id || status != string(identity.StatusActive)) {
 			return scim.Snapshot{}, identity.ForbiddenError{}
 		}
 		var resource scim.Resource
