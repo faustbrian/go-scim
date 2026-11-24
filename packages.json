@@ -25,6 +25,18 @@
       "coverage_required": true,
       "build_required": true,
       "build_tags": []
+    },
+    {
+      "module_directory": "organization",
+      "directory": "organization",
+      "name": "scimorganization",
+      "import_path": "github.com/faustbrian/go-scim/organization",
+      "kind": "public",
+      "production": true,
+      "executable": true,
+      "coverage_required": true,
+      "build_required": true,
+      "build_tags": []
     }
   ]
 }

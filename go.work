@@ -2,5 +2,6 @@ go 1.27.4
 
 use (
 	.
+	./organization
 	./postgres
 )

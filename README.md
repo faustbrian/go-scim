@@ -9,6 +9,9 @@ and authority owners. Its separately selected native Groups service provides
 directory CRUD/query, typed same-connection member references and original retry
 recovery without changing the default Users service. Organization reconciliation,
 global deprovisioning and native connection management remain separate work.
+The optional [organization mapping module](organization/README.md) selects
+exact configured Group/User edges for the SSO-owned native reconciliation
+workflow; it does not infer team roles or change global accounts.
 
 ## Durable command admission
 
