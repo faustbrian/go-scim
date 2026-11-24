@@ -18,6 +18,10 @@ reconciler maps the complete batch before calling the executor and validates
 the exact ordered receipts against its retained source batch. The native
 executor must preserve original command custody and obtain receipts from
 the authoritative transaction owner. SSO alone persists the checkpoint.
+If execution stops before every child outcome is observed, the reconciler
+returns the exact observed prefix and the execution or cancellation error.
+The partial result cannot advance the checkpoint and says nothing about
+whether unobserved children committed.
 The mapping module has no database, HTTP routes, scheduler or retry store.
 
 This selected direct-member profile does not qualify broader SCIM

@@ -108,7 +108,113 @@ func TestDirectoryReconcilerPreservesValidNativeOutcomesAndErrors(t *testing.T) 
 	}
 }
 
-func TestDirectoryReconcilerRejectsInvalidOrIncompleteNativeReceipts(t *testing.T) {
+func TestDirectoryReconcilerPreservesCommittedPrefixOnInterruptedBatch(t *testing.T) {
+	nativeErr := errors.New("later native child unavailable")
+	for _, test := range []struct {
+		name         string
+		executionErr error
+		cancel       bool
+		wantErr      error
+	}{
+		{name: "native reconciliation", executionErr: sso.ErrDirectoryReconciliation, wantErr: sso.ErrDirectoryReconciliation},
+		{name: "native failure", executionErr: nativeErr, wantErr: nativeErr},
+		{name: "late cancellation", cancel: true, wantErr: context.Canceled},
+		{name: "native failure precedes cancellation", executionErr: nativeErr, cancel: true, wantErr: nativeErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			batch := directoryBatch(t)
+			batch.Deltas = append(batch.Deltas,
+				directoryDelta(t, "AgICAgICAgICAgICAgICAg", "Group.A", "Member.A", sso.DirectoryMembershipRemove),
+				directoryDelta(t, "AwMDAwMDAwMDAwMDAwMDAw", "Group.A", "Member.A", sso.DirectoryMembershipAdd),
+			)
+			want := []sso.Completion{
+				reconcilerReceipt("AQEBAQEBAQEBAQEBAQEBAQ", identity.CommitOutcomeCommitted),
+				reconcilerReceipt("AgICAgICAgICAgICAgICAg", identity.CommitOutcomeCommitted),
+			}
+			receipts := []sso.Completion{
+				reconcilerReceipt("AQEBAQEBAQEBAQEBAQEBAQ", identity.CommitOutcomeCommitted),
+				reconcilerReceipt("AgICAgICAgICAgICAgICAg", identity.CommitOutcomeCommitted),
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			reconciler := newDirectoryReconciler(t, directoryExecutorFunc(func(gotCtx context.Context, mapped scimorganization.DirectoryMembershipBatch) ([]sso.Completion, error) {
+				if gotCtx != ctx || !reflect.DeepEqual(mapped.Source, batch) || len(mapped.Memberships) != 3 {
+					t.Fatal("executor did not receive the original complete mapped batch")
+				}
+				for i, membership := range mapped.Memberships {
+					original, err := batch.Deltas[i].GroupMembership()
+					if err != nil || membership.CommandID != original.CommandID || membership.Action != original.Action || membership.TeamID != "Team.A" || membership.UserID != "User.A" {
+						t.Fatal("executor received an altered child mapping", err)
+					}
+				}
+				if test.cancel {
+					cancel()
+				}
+				return receipts, test.executionErr
+			}))
+
+			result, err := reconciler.ApplyDirectoryDelta(ctx, batch)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatal("interrupted batch lost its original execution or cancellation error", err)
+			}
+			if result.Generation != batch.Generation || !reflect.DeepEqual(result.ChildOutcomes, want) {
+				t.Fatal("interrupted batch lost the exact observed prefix or synthesized an unobserved child")
+			}
+			if result.Checkpoint != ([32]byte{}) {
+				t.Fatal("incomplete batch produced a checkpoint")
+			}
+			if next, err := result.NextCheckpoint(batch); next != ([32]byte{}) || !errors.Is(err, sso.ErrDirectoryReconciliation) {
+				t.Fatal("observed committed prefix advanced the incomplete batch", err)
+			}
+
+			receipts[0].Feature.AfterVersion++
+			receipts[1].Feature.AfterVersion++
+			receipts[0] = sso.Completion{}
+			if !reflect.DeepEqual(result.ChildOutcomes, want) {
+				t.Fatal("retained prefix aliases executor-owned receipt storage")
+			}
+			if next, err := result.NextCheckpoint(batch); next != ([32]byte{}) || !errors.Is(err, sso.ErrDirectoryReconciliation) {
+				t.Fatal("executor mutation damaged the retained prefix evidence", err)
+			}
+		})
+	}
+}
+
+func TestDirectoryReconcilerRejectsInvalidInterruptedPrefixes(t *testing.T) {
+	batch := directoryBatch(t)
+	batch.Deltas = append(batch.Deltas,
+		directoryDelta(t, "AgICAgICAgICAgICAgICAg", "Group.A", "Member.A", sso.DirectoryMembershipRemove),
+		directoryDelta(t, "AwMDAwMDAwMDAwMDAwMDAw", "Group.A", "Member.A", sso.DirectoryMembershipAdd),
+	)
+	first := reconcilerReceipt("AQEBAQEBAQEBAQEBAQEBAQ", identity.CommitOutcomeCommitted)
+	second := reconcilerReceipt("AgICAgICAgICAgICAgICAg", identity.CommitOutcomeCommitted)
+	wrongUser := second
+	wrongUser.Binding.UserID = "OtherUser"
+	nativeErr := errors.New("later native child unavailable")
+	for _, test := range []struct {
+		name         string
+		receipts     []sso.Completion
+		executionErr error
+	}{
+		{name: "missing suffix without stop signal", receipts: []sso.Completion{first, second}},
+		{name: "wrong mapped user", receipts: []sso.Completion{first, wrongUser}, executionErr: nativeErr},
+		{name: "reordered prefix", receipts: []sso.Completion{second, first}, executionErr: nativeErr},
+		{name: "skipped first child", receipts: []sso.Completion{second}, executionErr: nativeErr},
+		{name: "malformed prefix", receipts: []sso.Completion{first, {}}, executionErr: nativeErr},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reconciler := newDirectoryReconciler(t, directoryExecutorFunc(func(context.Context, scimorganization.DirectoryMembershipBatch) ([]sso.Completion, error) {
+				return test.receipts, test.executionErr
+			}))
+			got, err := reconciler.ApplyDirectoryDelta(context.Background(), batch)
+			if !errors.Is(err, scimorganization.ErrInvalidDirectoryResult) || !reflect.DeepEqual(got, sso.DirectoryApplyResult{}) {
+				t.Fatal("invalid interrupted prefix produced retained results or synthetic outcomes", err)
+			}
+		})
+	}
+}
+
+func TestDirectoryReconcilerRejectsInvalidNativeReceipts(t *testing.T) {
 	batch := directoryBatch(t)
 	batch.Deltas = append(batch.Deltas, directoryDelta(t, "AgICAgICAgICAgICAgICAg", "Group.A", "Member.A", sso.DirectoryMembershipRemove))
 	first := reconcilerReceipt("AQEBAQEBAQEBAQEBAQEBAQ", identity.CommitOutcomeCommitted)
@@ -118,13 +224,12 @@ func TestDirectoryReconcilerRejectsInvalidOrIncompleteNativeReceipts(t *testing.
 	wrongCommand := second
 	wrongCommand.Binding.CommandID = first.Binding.CommandID
 	for name, receipts := range map[string][]sso.Completion{
-		"missing all":         nil,
-		"missing later child": {first},
-		"extra":               {first, second, second},
-		"reordered":           {second, first},
-		"foreign tenant":      {first, foreign},
-		"wrong command":       {first, wrongCommand},
-		"invalid":             {first, {}},
+		"missing all":    nil,
+		"extra":          {first, second, second},
+		"reordered":      {second, first},
+		"foreign tenant": {first, foreign},
+		"wrong command":  {first, wrongCommand},
+		"invalid":        {first, {}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			reconciler := newDirectoryReconciler(t, directoryExecutorFunc(func(context.Context, scimorganization.DirectoryMembershipBatch) ([]sso.Completion, error) {

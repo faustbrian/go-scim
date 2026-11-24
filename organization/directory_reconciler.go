@@ -26,7 +26,9 @@ const (
 //
 // The caller transfers the detached input for the duration of execution. The
 // executor must honor ctx, return exact original native receipts in input order
-// and preserve every committed sibling when a later child is denied or unknown.
+// and preserve every observed receipt when a later child is denied or unknown.
+// If execution stops with an error or canceled context before observing a later
+// outcome, return the observed prefix in the original order.
 // It must not fabricate terminal evidence from cancellation or an IO error, or
 // mutate returned receipt storage concurrently with the caller. Errors must be
 // stable and redacted. Native storage owns recovery; this boundary adds no
@@ -62,10 +64,11 @@ func NewDirectoryReconciler(mapper DirectoryMapper, executor DirectoryMembership
 // executor, so input mutation cannot change the expected command or user.
 //
 // Mapping failure or cancellation before execution returns zero without calling
-// the executor. Invalid/missing native receipts return zero and
-// ErrInvalidDirectoryResult, never synthetic outcomes or a rollback assertion.
-// A complete valid result survives an executor error or late cancellation: the
-// result and applicable error are both returned. An unresolved valid result
+// the executor. Invalid, empty or unexplained incomplete receipt lists return
+// zero and ErrInvalidDirectoryResult, never synthetic outcomes or a rollback
+// assertion. If execution stops with a valid observed prefix, return that
+// prefix and the error but no checkpoint. A complete valid result also survives
+// an executor error or late cancellation. An unresolved valid result
 // without another error returns sso.ErrDirectoryReconciliation. The executor's
 // error takes precedence over late cancellation or reconciliation. No cursor is
 // stored or advanced; only the SSO native owner may settle the original result.
@@ -94,7 +97,11 @@ func (r DirectoryReconciler) ApplyDirectoryDelta(ctx context.Context, batch sso.
 	}
 
 	receipts, executionErr := r.executor.ExecuteMappedDirectoryMemberships(ctx, mapped)
-	if len(receipts) != len(expectedUsers) {
+	if len(receipts) == 0 || len(receipts) > len(expectedUsers) {
+		return sso.DirectoryApplyResult{}, ErrInvalidDirectoryResult
+	}
+	incomplete := len(receipts) < len(expectedUsers)
+	if incomplete && executionErr == nil && ctx.Err() == nil {
 		return sso.DirectoryApplyResult{}, ErrInvalidDirectoryResult
 	}
 	for i, receipt := range receipts {
@@ -102,7 +109,12 @@ func (r DirectoryReconciler) ApplyDirectoryDelta(ctx context.Context, batch sso.
 			return sso.DirectoryApplyResult{}, ErrInvalidDirectoryResult
 		}
 	}
-	result, err := sso.NewDirectoryApplyResult(original, receipts)
+	var result sso.DirectoryApplyResult
+	if incomplete {
+		result, err = sso.NewDirectoryReconciliationResult(original, receipts)
+	} else {
+		result, err = sso.NewDirectoryApplyResult(original, receipts)
+	}
 	if err != nil {
 		return sso.DirectoryApplyResult{}, ErrInvalidDirectoryResult
 	}

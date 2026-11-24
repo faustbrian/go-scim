@@ -6,7 +6,7 @@ require (
 	github.com/faustbrian/go-authorization/v3 v3.0.1-0.20261015052455-a55bbebb1060
 	github.com/faustbrian/go-identity v0.0.0-20261101175215-789096fff1c1
 	github.com/faustbrian/go-organization v0.0.0-20261029050316-02c55d2b5bc0
-	github.com/faustbrian/go-sso v0.0.0-20261124121857-527aa851786e
+	github.com/faustbrian/go-sso v0.0.0-20261124141854-d9579eed5ba7
 )
 
 require (
