@@ -151,6 +151,15 @@ deadline. A different connection cannot supply evidence even when it uses
 the same service account. This API does not commit, start generations, map
 groups, or imply any permission to mutate organization memberships.
 
+For a direct Group-to-User change, also bind `DirectoryGroupEdge.Field`
+to the child. Use `RequireDirectoryGroupEdge` and
+`RequireDirectoryGroupEdgeAtCommit` in place of the source-only fences.
+They retain the same original source authority and connection writer lock,
+require a known scoped Group and User, and require the stored User projection
+to identify the child target. Adds require an exact live edge; withdrawals
+accept explicit absence or a retained Group tombstone. The API does not
+traverse nested groups or write a membership or cursor.
+
 ## Transaction and retry semantics
 
 The configured bootstrap and every write use the existing kernel command journal

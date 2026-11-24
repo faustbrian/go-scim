@@ -89,7 +89,7 @@ func (*directorySourceWorkOwner) RecoverParticipant(context.Context, kernel.Reco
 	return kernel.RecoveryUnknown, nil
 }
 
-func directorySourceWorkCoordinator(t *testing.T, f *nativeFixture, owner *directorySourceWorkOwner) (*kernel.Coordinator, *kernel.ContributorRegistry) {
+func directorySourceWorkCoordinator(t *testing.T, f *nativeFixture, owner kernel.FeatureExecutionContributor) (*kernel.Coordinator, *kernel.ContributorRegistry) {
 	t.Helper()
 	if _, err := f.pool.Raw().Exec(f.ctx, `CREATE TABLE public.directory_source_test_effects(command_id text PRIMARY KEY)`); err != nil {
 		t.Fatal("create harmless test effect owner", err)
@@ -117,7 +117,7 @@ func directorySourceWorkCoordinator(t *testing.T, f *nativeFixture, owner *direc
 	return coordinator, registry
 }
 
-func directorySourceWorkCommand(t *testing.T, f *nativeFixture, coordinator *kernel.Coordinator, registry *kernel.ContributorRegistry, owner *directorySourceWorkOwner, field identity.FeatureField, actor identity.ActorID) (identity.Command, kernel.CommandPlan) {
+func directorySourceWorkCommand(t *testing.T, f *nativeFixture, coordinator *kernel.Coordinator, registry *kernel.ContributorRegistry, owner *directorySourceWorkOwner, field identity.FeatureField, actor identity.ActorID, additional ...identity.FeatureField) (identity.Command, kernel.CommandPlan) {
 	t.Helper()
 	commandID, err := identity.NewCommandID()
 	if err != nil {
@@ -129,7 +129,7 @@ func directorySourceWorkCommand(t *testing.T, f *nativeFixture, coordinator *ker
 	}
 	operation := owner.FeatureOperations()[0]
 	binding := identity.CommandBinding{CommandID: commandID, TenantID: f.config.Scope.TenantID, UserID: identity.UserID(userID), ActorID: actor, ActorKind: authorization.SubjectServiceAccount, OperationID: operation.OperationID, PolicyID: f.config.PolicyID, PolicyVersion: f.config.PolicyVersion, SchemaID: operation.SchemaID, SchemaVersion: operation.SchemaVersion, CorrelationID: "directory-source-test", RecordID: "directory-source-test-effect"}
-	command, err := identity.NewFeatureCommand(identity.FeatureCommandSpec{Binding: binding, Operation: operation, Fields: []identity.FeatureField{field}})
+	command, err := identity.NewFeatureCommand(identity.FeatureCommandSpec{Binding: binding, Operation: operation, Fields: append([]identity.FeatureField{field}, additional...)})
 	if err != nil {
 		t.Fatal(err)
 	}

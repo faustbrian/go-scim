@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fence the exact SCIM Group/User edge during the original SSO child write
+  and final commit. Require the scoped User projection to identify the
+  target. Withdrawal can use retained tombstones; unknown Groups and
+  inferred or nested membership cannot authorize a change.
+
 - Bind configured SCIM source evidence to the exact original SSO child
   command. Recheck the same organization, connection and expiry in native
   Work before changes and at final commit; no synchronization authority is
