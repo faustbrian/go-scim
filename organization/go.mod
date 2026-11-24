@@ -3,6 +3,7 @@ module github.com/faustbrian/go-scim/organization
 go 1.27.0
 
 require (
+	github.com/faustbrian/go-authorization/v3 v3.0.1-0.20261015052455-a55bbebb1060
 	github.com/faustbrian/go-identity v0.0.0-20261101175215-789096fff1c1
 	github.com/faustbrian/go-organization v0.0.0-20261029050316-02c55d2b5bc0
 	github.com/faustbrian/go-sso v0.0.0-20261124121857-527aa851786e
@@ -11,7 +12,6 @@ require (
 require (
 	github.com/faustbrian/go-audit v1.0.0 // indirect
 	github.com/faustbrian/go-authentication/v2 v2.0.2-0.20261015052822-d9f5132c7f68 // indirect
-	github.com/faustbrian/go-authorization/v3 v3.0.1-0.20261015052455-a55bbebb1060 // indirect
 	github.com/faustbrian/go-capability/v2 v2.0.2-0.20261015044219-caab644d2fec // indirect
 	github.com/faustbrian/go-clock v1.2.0 // indirect
 	github.com/faustbrian/go-identity/delivery v0.0.0-20261015061706-1f0b46ab1053 // indirect
@@ -21,4 +21,5 @@ require (
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 )

@@ -377,7 +377,8 @@
       "reverse_owned_dependencies": [],
       "external_runtime_dependencies": [
         "golang.org/x/crypto",
-        "golang.org/x/net"
+        "golang.org/x/net",
+        "golang.org/x/sys"
       ],
       "required_services": [],
       "build_tags": [],
