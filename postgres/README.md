@@ -160,6 +160,15 @@ to identify the child target. Adds require an exact live edge; withdrawals
 accept explicit absence or a retained Group tombstone. The API does not
 traverse nested groups or write a membership or cursor.
 
+The User deprovisioning child instead binds `DirectoryUserDeprovisionEvidence`
+and uses `RequireDirectoryUserDeprovision` and its final check. A live User
+must be explicitly inactive at the selected revision. A deleted User must
+have the retained tombstone for the exact delete revision. Both require the
+source's stored local target, the original connection evidence and the
+registered User child. These checks do not select a disposition, mutate
+membership, or suspend an identity. SCIM User CRUD alone retains its
+existing projection-only behavior.
+
 ## Transaction and retry semantics
 
 The configured bootstrap and every write use the existing kernel command journal

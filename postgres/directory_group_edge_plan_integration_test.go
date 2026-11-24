@@ -17,6 +17,10 @@ import (
 func TestDirectoryGroupEdgeRepresentativePointLookupPlans(t *testing.T) {
 	f, groups := nativeGroupsFixture(t)
 	user := createNativeNamed(t, f, "PlanUser", "Plan identity")
+	var originalUser []byte
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT resource FROM scim.users WHERE resource_id=$1`, user).Scan(&originalUser); err != nil {
+		t.Fatal("retain original synthetic User payload", err)
+	}
 	groupResponse, err := groups.Execute(f.ctx, groupRequest(f, scim.GroupCreate, "", "", "plan-group", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Plan group"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -63,8 +67,15 @@ func TestDirectoryGroupEdgeRepresentativePointLookupPlans(t *testing.T) {
 		name, sql, id, table string
 	}{
 		{"Group", directoryGroupEdgeGroupSQL, group, "scim.groups"},
-		{"User", directoryGroupEdgeUserSQL, user, "scim.users"},
+		{"GroupUser", directoryGroupEdgeUserSQL, user, "scim.users"},
+		{"DeprovisionUser", directoryUserDeprovisionSQL, user, "scim.users"},
 	} {
+		if query.table == "scim.users" {
+			// Give both User reads the same live-to-tombstone workload.
+			if _, err := connection.Exec(f.ctx, `UPDATE scim.users SET resource=$2,deleted_at=NULL WHERE resource_id=$1`, user, originalUser); err != nil {
+				t.Fatal("restore identical benchmark User", err)
+			}
+		}
 		description, err := connection.Conn().Prepare(f.ctx, "edge-plan-"+query.name, query.sql)
 		if err != nil {
 			t.Fatal("prepare actual parameterized query", err)

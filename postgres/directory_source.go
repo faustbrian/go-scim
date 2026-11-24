@@ -196,7 +196,7 @@ func (s *GroupsService) RequireDirectorySource(ctx context.Context, w kernel.Wor
 	if err := w.RequireFeatureCommand(ctx, owner, command); err != nil {
 		return err
 	}
-	return s.requireDirectorySource(ctx, w, owner, command, observation)
+	return s.requireDirectorySource(ctx, w, owner, command, observation, directoryGroupSourceRegistration())
 }
 
 // RequireDirectorySourceAtCommit rechecks the same original evidence and expiry
@@ -206,20 +206,23 @@ func (s *GroupsService) RequireDirectorySource(ctx context.Context, w kernel.Wor
 // original-command custody check is deliberately Apply-only. This method cannot
 // substitute for RequireDirectorySource during Apply or renew its evidence.
 func (s *GroupsService) RequireDirectorySourceAtCommit(ctx context.Context, w kernel.Work, owner kernel.FeatureExecutionContributor, command identity.Command, observation DirectorySourceObservation) error {
-	return s.requireDirectorySource(ctx, w, owner, command, observation)
+	return s.requireDirectorySource(ctx, w, owner, command, observation, directoryGroupSourceRegistration())
 }
 
-func (s *GroupsService) requireDirectorySource(ctx context.Context, w kernel.Work, owner kernel.FeatureExecutionContributor, command identity.Command, observation DirectorySourceObservation) error {
+func directoryGroupSourceRegistration() kernel.FeatureRegistration {
+	return kernel.FeatureRegistration{
+		Contributor: kernel.ContributorDescriptor{Owner: "sso/postgres", ContractID: "sso.directory-team-membership", Version: 1},
+		Operation:   identity.FeatureOperation{Owner: "sso", OperationID: "identity.sso.directory-sync.apply-child", SchemaID: "sso.directory-team-membership", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectUser, VersionPolicy: identity.FeatureVersionSequential},
+	}
+}
+
+func (s *GroupsService) requireDirectorySource(ctx context.Context, w kernel.Work, owner kernel.FeatureExecutionContributor, command identity.Command, observation DirectorySourceObservation, expected kernel.FeatureRegistration) error {
 	if s == nil || s.native == nil || s.native.config == nil || ctx == nil || observation.source != s.native {
 		return identity.ForbiddenError{}
 	}
 	binding, registration, _, err := w.FeatureScope(owner)
 	if err != nil {
 		return identity.ForbiddenError{}
-	}
-	expected := kernel.FeatureRegistration{
-		Contributor: kernel.ContributorDescriptor{Owner: "sso/postgres", ContractID: "sso.directory-team-membership", Version: 1},
-		Operation:   identity.FeatureOperation{Owner: "sso", OperationID: "identity.sso.directory-sync.apply-child", SchemaID: "sso.directory-team-membership", SchemaVersion: 1, RecordRequirement: identity.FeatureRecordRequired, SubjectRequirement: identity.FeatureSubjectUser, VersionPolicy: identity.FeatureVersionSequential},
 	}
 	spec, ok := command.Feature()
 	if !ok || spec.Binding != binding || spec.Operation != registration.Operation || registration != expected {

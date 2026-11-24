@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fence the exact revision of an inactive or deleted SCIM User in the
+  original SSO deprovisioning child's Work. A different identity, source
+  revision, or later reactivation cannot authorize withdrawal.
+
 - Fence the exact SCIM Group/User edge during the original SSO child write
   and final commit. Require the scoped User projection to identify the
   target. Withdrawal can use retained tombstones; unknown Groups and
