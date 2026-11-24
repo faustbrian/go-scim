@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bind configured SCIM source evidence to the exact original SSO child
+  command. Recheck the same organization, connection and expiry in native
+  Work before changes and at final commit; no synchronization authority is
+  inferred from a valid connection.
+
 - Add an explicitly selected native Groups profile with authenticated discovery,
   complete CRUD/filter/search/pagination, atomic typed same-connection member
   validation, ETag/no-op/CAS and retained original retries through the existing

@@ -139,6 +139,18 @@ recording its accepted audit/outbox; effective updates use exact native CAS.
 Original success and failure replay, uncertain COMMIT handling and current
 authority checks use the same owners as Users, not a Group outcome journal.
 
+### Configured source evidence for SSO
+
+`GroupsService.ObserveDirectorySource` is a trusted composition read for the
+exact installed connection. The returned evidence does not authorize a sync.
+Add its `Field` to the original SSO team-membership child command, then use
+`RequireDirectorySource` in Apply and `RequireDirectorySourceAtCommit` from
+the registered owner's final check after verifying the original command.
+Both checks borrow the existing identity Work and retain the original
+deadline. A different connection cannot supply evidence even when it uses
+the same service account. This API does not commit, start generations, map
+groups, or imply any permission to mutate organization memberships.
+
 ## Transaction and retry semantics
 
 The configured bootstrap and every write use the existing kernel command journal
