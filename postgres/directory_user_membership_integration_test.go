@@ -24,16 +24,17 @@ import (
 // The coordinator, source and organization writer are real. This participant
 // exercises their shared Work; native SSO owns the generation and admission.
 type directoryMembershipTestOwner struct {
-	groups      *GroupsService
-	observation DirectorySourceObservation
-	evidence    DirectoryUserMembershipEvidence
-	update      organizationpg.DirectoryMembershipUpdate
-	effect      organizationpg.DirectoryMembershipEffect
-	op          identity.FeatureOperation
-	command     identity.Command
-	zeroEffect  bool
-	applyCalls  int
-	afterLock   func(context.Context, kernel.Work) error
+	groups          *GroupsService
+	observation     DirectorySourceObservation
+	evidence        DirectoryUserMembershipEvidence
+	update          organizationpg.DirectoryMembershipUpdate
+	effect          organizationpg.DirectoryMembershipEffect
+	op              identity.FeatureOperation
+	command         identity.Command
+	zeroEffect      bool
+	recordSuccessor bool
+	applyCalls      int
+	afterLock       func(context.Context, kernel.Work) error
 }
 
 func (p *directoryMembershipTestOwner) Descriptor() kernel.ContributorDescriptor {
@@ -65,6 +66,11 @@ func (p *directoryMembershipTestOwner) ApplyFeature(ctx context.Context, w kerne
 	p.effect, err = p.groups.native.organizations.ApplyDirectoryMembershipUpdate(ctx, w, p, command, p.update, locked)
 	if err != nil {
 		return identity.FeatureReceipt{}, err
+	}
+	if p.recordSuccessor {
+		if err := p.groups.native.organizations.RecordDirectoryMembershipSuccessor(ctx, w, p, command, p.effect); err != nil {
+			return identity.FeatureReceipt{}, err
+		}
 	}
 	return identity.FeatureReceipt{Operation: p.op, BeforeVersion: p.update.BeforeVersion(), AfterVersion: p.update.AfterVersion()}, nil
 }

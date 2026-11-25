@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Carry the exact organization version committed by a directory User child
+  into the next sealed source observation without renewing any original
+  evidence or bypassing the next child's authorization fences.
+
 - Expose bounded exact Group edge states for drift inspection. Distinguish
   proven absence, an inactive User and an unproven link while preserving the
   existing boolean role-eligibility API.

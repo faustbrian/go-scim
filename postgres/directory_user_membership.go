@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"time"
 
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
@@ -11,6 +12,48 @@ import (
 	organizationpg "github.com/faustbrian/go-organization/postgres"
 	scim "github.com/faustbrian/go-scim"
 )
+
+// AdvanceDirectorySourceAfterUserCommit carries exactly one durably recorded
+// User child's organization successor into the next child in the same admitted
+// batch. The caller supplies the exact resource and an independently authorized
+// original kernel receipt. This does not authenticate a receipt, authorize or
+// execute the next child, or validate historical prefixes after a restart.
+//
+// The observation must belong to the same configured Service. Its connection,
+// actor, other owner epochs and all deadlines remain unchanged. The next child
+// must still apply its normal live source fences inside Work. Failure returns
+// a zero observation; cancellation and the original deadline bound recovery.
+func (s *GroupsService) AdvanceDirectorySourceAfterUserCommit(ctx context.Context, original DirectorySourceObservation, resourceID string, receipt identity.CommandResult) (DirectorySourceObservation, error) {
+	var zero DirectorySourceObservation
+	if s == nil || s.native == nil || s.protocol == nil || ctx == nil || original.source != s.native {
+		return zero, identity.ForbiddenError{}
+	}
+	if _, err := identity.ParseSubjectID(resourceID); err != nil {
+		return zero, identity.ForbiddenError{}
+	}
+	bindings, err := original.bindings(ctx)
+	if err != nil || receipt.Binding.ActorID != bindings.ActorID {
+		return zero, identity.ForbiddenError{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, min(s.native.config().MaximumDuration, time.Until(bindings.ValidUntil)))
+	defer cancel()
+	source := directoryMembershipOwnerSource(bindings.Scope, receipt.Binding.UserID, resourceID)
+	successor, err := s.native.organizations.RecoverDirectoryMembershipSuccessor(ctx, source, original.admission.organization, receipt)
+	if err != nil {
+		return zero, err
+	}
+	advanced := original
+	advanced.admission.organization.Version = successor.Version
+	if _, err := advanced.bindings(ctx); err != nil {
+		return zero, err
+	}
+	return advanced, nil
+}
+
+func directoryMembershipOwnerSource(scope scim.Scope, user identity.UserID, resourceID string) organizationpg.DirectoryMembershipSource {
+	return organizationpg.DirectoryMembershipSource{TenantID: scope.TenantID, OrganizationID: organization.ID(scope.OrganizationID), UserID: user,
+		ProviderID: organization.ID(scope.ProviderID), ConnectionID: organization.ID(scope.ConnectionID), ResourceID: organization.ID(resourceID)}
+}
 
 // DirectoryUserMembershipState selects an exact source condition, not an
 // organization policy decision. No default User state is inferred.
@@ -133,8 +176,7 @@ func (s *GroupsService) RequireDirectoryUserMembershipAtCommit(ctx context.Conte
 		return err
 	}
 	spec, _ := command.Feature()
-	scope := bindings.Scope
-	source := organizationpg.DirectoryMembershipSource{TenantID: scope.TenantID, OrganizationID: organization.ID(scope.OrganizationID), UserID: spec.Binding.UserID, ProviderID: organization.ID(scope.ProviderID), ConnectionID: organization.ID(scope.ConnectionID), ResourceID: organization.ID(evidence.ResourceID)}
+	source := directoryMembershipOwnerSource(bindings.Scope, spec.Binding.UserID, evidence.ResourceID)
 	if err := s.native.organizations.RequireDirectoryMembershipSourceOwner(ctx, w, owner, command, source, original.organization, effect); err != nil {
 		return err
 	}

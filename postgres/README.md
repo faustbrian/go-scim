@@ -182,6 +182,16 @@ It recognizes only that Work's own organization successor and never extends
 the source observation lifetime. Group fences and standalone User CRUD stay
 unchanged. The caller owns admission policy, generation and command recovery.
 
+To carry authority into the next child of the same admitted batch, install
+the organization's `DirectoryMembershipSuccessorMigrationSource` and record
+the successor in the original User Work. After authorized kernel receipt
+recovery, pass the original sealed observation, exact User resource and
+receipt to `AdvanceDirectorySourceAfterUserCommit`. Only the organization
+version changes. The source, actor, connection, other epochs and all original
+times stay unchanged. The next child's existing Apply and final fences still
+check live authority. This API does not authorize replay of a historical
+prefix or renew an expired observation.
+
 ### Explicit directory role source
 
 For opt-in team-role permission checks, first take a current
