@@ -219,6 +219,15 @@ organization successor, not refreshed or guessed source authority. No
 route, scheduler, cursor or audit owner is added; ordinary Group
 reconciliation keeps its original behavior.
 
+To continue a mixed batch after role Work commits, install the organization's
+role successor migration and record the transition in that original Work.
+`AdvanceDirectorySourceAfterRoleCommit` then preserves the original SCIM
+seal and deadline while carrying only the exact committed organization version.
+After restart, `ValidateDirectorySourceSuccessorPrefix` compares the complete
+ordered User and role prefix against the already-observed configured source.
+A stale seal is rejected even when the prefix later became current, and
+the next child still checks live authority in Work.
+
 ## Transaction and retry semantics
 
 The configured bootstrap and every write use the existing kernel command journal

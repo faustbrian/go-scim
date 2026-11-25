@@ -27,6 +27,8 @@ type directoryGroupRoleWorkOwner struct {
 	update organizationpg.DirectoryTeamRoleUpdate
 	locked organizationpg.DirectoryTeamRoleLock
 	late   string
+
+	recordRoleSuccessor bool
 }
 
 func (p *directoryGroupRoleWorkOwner) ValidateFeatureCommand(command identity.Command, plan kernel.CommandPlan) error {
@@ -60,6 +62,11 @@ func (p *directoryGroupRoleWorkOwner) ApplyFeature(ctx context.Context, w kernel
 	}
 	if err := p.groups.native.organizations.ApplyDirectoryTeamRoleUpdate(ctx, w, p, command, p.update, p.locked); err != nil {
 		return identity.FeatureReceipt{}, err
+	}
+	if p.recordRoleSuccessor {
+		if err := p.groups.native.organizations.RecordDirectoryTeamRoleSuccessor(ctx, w, p, command, p.update, p.locked); err != nil {
+			return identity.FeatureReceipt{}, err
+		}
 	}
 	spec, _ := command.Feature()
 	if _, err := w.Exec(ctx, `INSERT INTO public.directory_source_test_effects(command_id) VALUES($1)`, string(spec.Binding.CommandID)); err != nil {
