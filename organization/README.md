@@ -24,6 +24,20 @@ The partial result cannot advance the checkpoint and says nothing about
 whether unobserved children committed.
 The mapping module has no database, HTTP routes, scheduler or retry store.
 
+## Opt-in Group role mapping
+
+`NewDirectoryRoleMapper` snapshots the exact Group and member mapping plus
+one explicit role selection for each configured Group/team. A role must be
+a custom role ID, never a static organization role. A Group's display name
+or source ID cannot infer a role. The ordinary `DirectoryMapper` stays
+membership-only.
+
+`MapDirectoryRoleDelta` returns the original SSO batch and ordered mapped
+edges with their explicit role IDs, or no result on failure.
+`MatchesDirectoryRoleSource` compares a detached source and target to this
+configuration without reading storage. It does not certify the Group edge,
+enrolled native team-role binding, provider or organization authority.
+
 ## Opt-in User mapping
 
 `DirectoryUserMapper` separately selects User admission and source-owned

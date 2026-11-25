@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an explicit, exact-scope Group role mapper. Retain original child
+  commands and require a configured custom role for every selected team.
+  No role or authority is inferred from source identifiers.
+
 - Add an opt-in, exact-scope User mapper for explicit organization admission
   and inactive/deleted source withdrawals. Preserve source revisions and child
   commands, snapshot bounded member mappings, and return no partial output
