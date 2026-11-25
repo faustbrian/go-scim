@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Record protected `identity.scim.bulk_admit` events for newly prepared Group
+  Bulk admissions. Existing preparations and requests retain their original
+  event and retry behavior without re-emitting it.
+
 - Execute and recover an admitted acyclic Group create using its original
   authorization and IDs. Commit its ordinary Group projection and typed
   result checkpoint together. Routing and discovery remain unchanged.

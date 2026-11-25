@@ -14,12 +14,13 @@ import (
 )
 
 type bulkAdmissionPhase struct {
-	children        []scim.BulkOperation
-	components      []scim.BulkComponent
-	cutoff, maximum int
-	profile         [32]byte
-	intent          [32]byte
-	allocation      []bulkAllocation
+	children          []scim.BulkOperation
+	components        []scim.BulkComponent
+	cutoff, maximum   int
+	profile           [32]byte
+	intent            [32]byte
+	allocation        []bulkAllocation
+	preparationSchema uint8
 }
 
 type bulkAllocation struct {
@@ -39,9 +40,17 @@ type bulkPreparedInput struct {
 	Allocations []bulkAllocation
 }
 
-const bulkPreparationPlaintextLimit = 110 * 1024
+const (
+	bulkPreparationPlaintextLimit       = 110 * 1024
+	bulkPreparationLegacy         uint8 = 1
+	bulkPreparationAuditAdmit     uint8 = 2
+)
 
 func (p *nativePhase) prepareBulkRequest(ctx context.Context, b kernel.RequestKeyPreparationBinding) ([]byte, error) {
+	return p.prepareBulkRequestVersion(ctx, b, bulkPreparationAuditAdmit)
+}
+
+func (p *nativePhase) prepareBulkRequestVersion(ctx context.Context, b kernel.RequestKeyPreparationBinding, schema uint8) ([]byte, error) {
 	aad, err := p.preparationAAD(b)
 	if err != nil {
 		return nil, err
@@ -54,7 +63,7 @@ func (p *nativePhase) prepareBulkRequest(ctx context.Context, b kernel.RequestKe
 	if _, err := p.service.restoreAdmission(admission, at); err != nil {
 		return nil, err
 	}
-	input := bulkPreparedInput{Schema: 1, Parent: b.Admission.CommandID, At: at, Profile: p.bulk.profile,
+	input := bulkPreparedInput{Schema: schema, Parent: b.Admission.CommandID, At: at, Profile: p.bulk.profile,
 		Maximum: p.bulk.maximum, Admission: admission, Allocations: make([]bulkAllocation, len(p.bulk.children))}
 	for i, child := range p.bulk.children {
 		if err := ctx.Err(); err != nil {
@@ -115,6 +124,7 @@ func (p *nativePhase) restoreBulkRequest(ctx context.Context, b kernel.RequestKe
 	}
 	p.original = originalInput{Command: input.Parent, At: input.At, Admission: input.Admission}
 	p.bulk.allocation, p.bulk.intent = input.Allocations, b.IntentDigest
+	p.bulk.preparationSchema = input.Schema
 
 	c, op := p.service.config(), p.operation()
 	binding := identity.CommandBinding{CommandID: input.Parent, TenantID: c.Scope.TenantID, UserID: identity.UserID(c.ActorID),
@@ -127,7 +137,8 @@ func (p *nativePhase) restoreBulkRequest(ctx context.Context, b kernel.RequestKe
 }
 
 func (p *bulkAdmissionPhase) validAllocation(input bulkPreparedInput, command identity.CommandID) bool {
-	if input.Schema != 1 || input.Parent != command || input.Profile != p.profile || input.Maximum != p.maximum ||
+	if (input.Schema != bulkPreparationLegacy && input.Schema != bulkPreparationAuditAdmit) ||
+		input.Parent != command || input.Profile != p.profile || input.Maximum != p.maximum ||
 		len(input.Allocations) != len(p.children) || input.At.IsZero() || input.At.Year() < 1 || input.At.Year() > 9999 || !input.At.Equal(input.At.Truncate(time.Microsecond)) {
 		return false
 	}

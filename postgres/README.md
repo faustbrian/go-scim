@@ -40,7 +40,12 @@ kernel's `CanonicalSCIMBulkRequestMigrationSource` and this module's
 proved response byte ceiling are required before the request obtains custody.
 The same protected transaction commits one parent, all allocated child IDs,
 their exact dependencies and the planned component order, plus the admission
-audit and outbox effect. A matching retry recovers the same parent and bound.
+audit and outbox effect. Newly prepared admissions record
+`identity.scim.bulk_admit`. Existing preparations retain their original
+`identity.scim.bulk` action; retry does not rewrite or duplicate it. Upgrade
+all processes sharing Group Bulk admission storage before accepting new
+preparations: older binaries cannot resume the new preparation version.
+A matching retry recovers the same parent and bound.
 An optional key aliases that parent; using it for different input conflicts.
 Admission itself executes no child and is not a Bulk response. Ordinary Users
 and Groups, HTTP routing and discovery still do not enable Bulk.

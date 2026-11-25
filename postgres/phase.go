@@ -246,6 +246,18 @@ func (p *nativePhase) auditAction() string {
 	if p.bulkChild != nil {
 		return "identity.scim.bulk_apply_child"
 	}
+	if p.bulk != nil {
+		// Existing custody must rebuild the same plan, even when admission
+		// committed before the original reply reached the caller.
+		switch p.bulk.preparationSchema {
+		case bulkPreparationLegacy:
+			return p.operation().OperationID
+		case bulkPreparationAuditAdmit:
+			return "identity.scim.bulk_admit"
+		default:
+			return ""
+		}
+	}
 	return p.operation().OperationID
 }
 
