@@ -32,6 +32,8 @@ github.com/faustbrian/go-sso v0.0.0-20261124121857-527aa851786e h1:wt0vw7lCR7CZg
 github.com/faustbrian/go-sso v0.0.0-20261124121857-527aa851786e/go.mod h1:8t+cOqDVJC60hGJHau0RBT4qE2ujMatsVWgXvkE/Bzk=
 github.com/faustbrian/go-sso v0.0.0-20261124141854-d9579eed5ba7 h1:IyFBo+Rgh64ySty1rHsbr8k05+yLuDSGJzk4uHYLky4=
 github.com/faustbrian/go-sso v0.0.0-20261124141854-d9579eed5ba7/go.mod h1:8t+cOqDVJC60hGJHau0RBT4qE2ujMatsVWgXvkE/Bzk=
+github.com/faustbrian/go-sso v0.0.0-20261125020955-e0d8d216cf33 h1:7L/SWv7RyF1FZS8KHO2DiFjWwfEA0cxdKbkoIZq67ks=
+github.com/faustbrian/go-sso v0.0.0-20261125020955-e0d8d216cf33/go.mod h1:8t+cOqDVJC60hGJHau0RBT4qE2ujMatsVWgXvkE/Bzk=
 github.com/go-logr/logr v1.4.4 h1:tG4xh9yMsRCAiodLVTxyrkzSZ9+o0L1Kg/+cPVcbP/8=
 github.com/go-logr/logr v1.4.4/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
 github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=

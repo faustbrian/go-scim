@@ -24,5 +24,39 @@ The partial result cannot advance the checkpoint and says nothing about
 whether unobserved children committed.
 The mapping module has no database, HTTP routes, scheduler or retry store.
 
-This selected direct-member profile does not qualify broader SCIM
-provisioning, User deprovisioning or full organization reconciliation.
+## Opt-in User mapping
+
+`DirectoryUserMapper` separately selects User admission and source-owned
+organization withdrawal policy. Construct it with
+`NewDirectoryUserMapper(DirectoryUserMappingConfig{...})`, the exact tenant,
+organization, provider, connection and positive current mapping version,
+1..1,000 explicit `Members`, and `AllowAdmission`, `AllowWithdrawal`, or both.
+The zero mapper and an all-disabled configuration reject every action.
+Configuration is snapshotted; update the version by constructing a new mapper.
+
+`MapDirectoryUserDelta` preserves the original SSO envelope and ordered child
+commands, source User resource IDs and revisions. It selects
+`DirectoryUserAdmit`, `DirectoryUserWithdrawInactive` or
+`DirectoryUserWithdrawDeleted` for the explicitly mapped existing local user.
+Only the exact source User resource ID is a mapping key. There is no fallback
+to aliases, externalId, usernames, emails, display names or Group mappings.
+Duplicate source mapping rows are rejected, including identical duplicates.
+
+The mapper accepts bounded all-User batches, including combined admission
+and withdrawal actions, but rejects Group-only or mixed Group/User batches.
+Wrong scope or version, unknown resources or unselected actions return
+`ErrMappingDenied`; malformed or unsupported input returns
+`ErrInvalidMappingInput`. Every failure returns zero output. Implicit
+formatting and structured logs redact identifiers; implicit JSON and text
+serialization return `ErrSensitiveSerialization`.
+
+This output is mapping policy, not source authority, authorization, a durable
+receipt or a checkpoint. A native executor must obtain the original source
+observation, current policy and authoritative identity and organization
+decisions before applying effects under the original child command. The
+executor may support a narrower batch size than the pure mapper. The User
+mapper does not implement the SSO contributor and does not change the existing
+Group mapper or reconciler contract.
+
+These selected profiles do not qualify broader SCIM identity provisioning,
+global identity suspension/deletion or full organization reconciliation.
