@@ -153,6 +153,13 @@ routes, raw/decoded streaming limits, TLS, header parsing, deadlines and writing
 `*Error` with its `StatusCode()` and `application/scim+json`. It must expose no
 Groups routes for a Users-only composition, or Users routes for a Groups-only
 composition. No selected service exposes Bulk/connection-management routes.
+
+`ParseBulk` is a protocol-only input boundary for a future native Bulk
+adapter. Supply explicit operation and byte limits. Its immutable plan retains
+the ordered requests and their exact semantic fingerprint input, and puts
+local reference components in prerequisite-first order. It does not persist
+children, allocate IDs, preflight the response, or execute any operation.
+The selected services continue to report Bulk as unsupported.
 The combined service dispatches Group operations only to GroupStore/GroupMapper
 and User operations only to Store/Mapper. Combined root search requires the
 explicit single mixed-resource snapshot owner and otherwise fails closed rather

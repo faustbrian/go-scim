@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Parse bounded Bulk requests into an immutable ordered child list and a
+  deterministic dependency plan. This does not enable or advertise Bulk.
+
 - Document the optional native Groups selection and its typed directory
   references, without changing root protocol APIs or default Users selection.
 
