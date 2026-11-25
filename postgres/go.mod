@@ -12,7 +12,7 @@ require (
 	github.com/faustbrian/go-identity/postgres v0.0.0-20261124105449-b80eb17a2361
 	github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc
 	github.com/faustbrian/go-organization v0.0.0-20261122135635-30af6abd1547
-	github.com/faustbrian/go-organization/postgres v0.0.0-20261125015534-402ae53a1263
+	github.com/faustbrian/go-organization/postgres v0.0.0-20261125031437-1ab0ef15b8ea
 	github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7
 	github.com/faustbrian/go-scim v0.0.0-20261113195101-e97918aba312
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Read exact current Group role edges in an ordered bounded primary batch
+  and compose role-bearing Work with its own organization successor.
+  Existing Group and User reconciliation remains unchanged.
+
 - Fence SCIM User admission and withdrawal in the same transaction as the
   organization effect. Final source checks accept only that command's own
   organization successor and retain the original authority deadline.

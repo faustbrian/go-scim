@@ -21,11 +21,15 @@ func TestDirectoryGroupEdgeRepresentativePointLookupPlans(t *testing.T) {
 	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT resource FROM scim.users WHERE resource_id=$1`, user).Scan(&originalUser); err != nil {
 		t.Fatal("retain original synthetic User payload", err)
 	}
-	groupResponse, err := groups.Execute(f.ctx, groupRequest(f, scim.GroupCreate, "", "", "plan-group", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Plan group"}`))
+	groupResponse, err := groups.Execute(f.ctx, groupRequest(f, scim.GroupCreate, "", "", "plan-group", `{"schemas":["urn:ietf:params:scim:schemas:core:2.0:Group"],"displayName":"Plan group","members":[{"value":"`+user+`","type":"User"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	group := groupID(t, groupResponse)
+	var originalGroup []byte
+	if err := f.pool.Raw().QueryRow(f.ctx, "SELECT resource FROM scim.groups WHERE resource_id=$1", group).Scan(&originalGroup); err != nil {
+		t.Fatal("retain original synthetic Group payload", err)
+	}
 	// 10,000 irrelevant keys in each table make an accidental connection-wide
 	// scan visible. Most keys share the selected scope; the full PK still admits
 	// at most one row independently of member density and tenant selectivity.
@@ -146,5 +150,120 @@ func TestDirectoryGroupEdgeRepresentativePointLookupPlans(t *testing.T) {
 			}
 			t.Logf("%s/%s client samples=%v; exact plan=%s", query.name, mode, elapsed, plan)
 		}
+	}
+	for _, selected := range []struct {
+		query string
+		id    string
+		wire  []byte
+	}{
+		{"UPDATE scim.groups SET resource=$2,deleted_at=NULL WHERE resource_id=$1", group, originalGroup},
+		{"UPDATE scim.users SET resource=$2,deleted_at=NULL WHERE resource_id=$1", user, originalUser},
+	} {
+		if _, err := connection.Exec(f.ctx, selected.query, selected.id, selected.wire); err != nil {
+			t.Fatal("restore original live payload for role plans", err)
+		}
+	}
+	measureDirectoryGroupRoleEdges(t, f, groups, group, user)
+}
+
+type directoryGroupRolePlanNode struct {
+	Relation string                       `json:"Relation Name"`
+	Index    string                       `json:"Index Name"`
+	Rows     float64                      `json:"Actual Rows"`
+	Loops    float64                      `json:"Actual Loops"`
+	Filtered float64                      `json:"Rows Removed by Filter"`
+	Plans    []directoryGroupRolePlanNode `json:"Plans"`
+}
+
+func (p directoryGroupRolePlanNode) count(relation string) (float64, bool) {
+	var examined float64
+	var indexed bool
+	if p.Relation == relation {
+		examined = (p.Rows + p.Filtered) * p.Loops
+		indexed = strings.HasSuffix(p.Index, "_pkey")
+	}
+	for _, child := range p.Plans {
+		n, hit := child.count(relation)
+		examined += n
+		indexed = indexed || hit
+	}
+	return examined, indexed
+}
+
+func measureDirectoryGroupRoleEdges(t *testing.T, f *nativeFixture, groups *GroupsService, group, user string) {
+	t.Helper()
+	observed, err := groups.ObserveDirectorySource(f.ctx, f.config.Scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := observed.Bindings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := func(query, first string) []string {
+		t.Helper()
+		args := append(scopeArgs(f.config.Scope), first, maximumDirectoryGroupRoleEdges-1)
+		rows, err := f.pool.Raw().Query(f.ctx, query, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		got := []string{first}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, id)
+		}
+		if rows.Err() != nil || len(got) != maximumDirectoryGroupRoleEdges {
+			t.Fatal("synthetic role batch does not have enough distinct keys", rows.Err())
+		}
+		return got
+	}
+	groupIDs := keys(`SELECT resource_id FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id<>$5 AND deleted_at IS NULL ORDER BY resource_id LIMIT $6`, group)
+	memberIDs := keys(`SELECT resource_id FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id<>$5 AND deleted_at IS NULL ORDER BY resource_id LIMIT $6`, user)
+	for _, size := range []int{1, maximumDirectoryGroupRoleEdges} {
+		args := directoryGroupRoleEdgeArguments(groups.native, bindings, observed.admission, groupIDs[:size], memberIDs[:size])
+		var wire []byte
+		if err := f.pool.Raw().QueryRow(f.ctx, "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+directoryGroupRoleEdgesSQL, args...).Scan(&wire); err != nil {
+			t.Fatal("measure actual role edge batch", err)
+		}
+		var plan []struct {
+			Plan directoryGroupRolePlanNode
+			MS   float64 `json:"Execution Time"`
+		}
+		if err := json.Unmarshal(wire, &plan); err != nil || len(plan) != 1 || plan[0].Plan.Rows != float64(size) {
+			t.Fatal("actual role edge plan did not retain input cardinality", err)
+		}
+		for _, relation := range []string{"groups", "users"} {
+			examined, indexed := plan[0].Plan.count(relation)
+			t.Logf("role edge distinct live batch=%d table=%s examined=%.0f indexed=%t db=%.3fms", size, relation, examined, indexed, plan[0].MS)
+			if !indexed || examined > float64(size) {
+				t.Fatalf("batch query traversed unrelated %s projections: %s", relation, wire)
+			}
+		}
+		var elapsed [3]time.Duration
+		for i := range elapsed {
+			start := time.Now()
+			rows, err := f.pool.Raw().Query(f.ctx, directoryGroupRoleEdgesSQL, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for rows.Next() {
+				if _, err := rows.Values(); err != nil {
+					rows.Close()
+					t.Fatal(err)
+				}
+				count++
+			}
+			rows.Close()
+			elapsed[i] = time.Since(start)
+			if rows.Err() != nil || count != size {
+				t.Fatal("bound Go role batch did not retain exact input cardinality", count, rows.Err())
+			}
+		}
+		t.Logf("role edge distinct live batch=%d Go/pgx client samples=%v", size, elapsed)
 	}
 }

@@ -75,6 +75,14 @@ const directoryGroupEdgeGroupSQL = `SELECT resource,deleted_at IS NOT NULL FROM 
 const directoryGroupEdgeUserSQL = `SELECT user_id,resource,deleted_at IS NOT NULL FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND octet_length(resource)<=131072`
 
 func (s *GroupsService) requireDirectoryGroupEdge(ctx context.Context, w kernel.Work, command identity.Command, observation DirectorySourceObservation, edge DirectoryGroupEdge) error {
+	return s.requireDirectoryGroupEdgeWithProfile(ctx, w, command, observation, edge, false)
+}
+
+func (s *GroupsService) requireDirectoryRoleGroupEdge(ctx context.Context, w kernel.Work, command identity.Command, observation DirectorySourceObservation, edge DirectoryGroupEdge) error {
+	return s.requireDirectoryGroupEdgeWithProfile(ctx, w, command, observation, edge, true)
+}
+
+func (s *GroupsService) requireDirectoryGroupEdgeWithProfile(ctx context.Context, w kernel.Work, command identity.Command, observation DirectorySourceObservation, edge DirectoryGroupEdge, role bool) error {
 	expected, err := edge.Field()
 	if err != nil {
 		return err
@@ -147,8 +155,20 @@ func (s *GroupsService) requireDirectoryGroupEdge(ctx context.Context, w kernel.
 		if edge.Present || !bytes.Equal(userWire, []byte("null")) {
 			return identity.ForbiddenError{}
 		}
-	} else if _, err := directoryGroupEdgeResource(userWire, edge.UserID, "User"); err != nil {
-		return err
+	} else {
+		user, err := directoryGroupEdgeResource(userWire, edge.UserID, "User")
+		if err != nil {
+			return err
+		}
+		if role && edge.Present {
+			active, err := directoryGroupRoleUserActive(user)
+			if err != nil {
+				return err
+			}
+			if !active {
+				return identity.ForbiddenError{}
+			}
+		}
 	}
 	// The connection lock retains source versions, but a slow lookup cannot
 	// retain time. Recheck the original deadline after all projection work.

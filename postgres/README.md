@@ -182,6 +182,27 @@ It recognizes only that Work's own organization successor and never extends
 the source observation lifetime. Group fences and standalone User CRUD stay
 unchanged. The caller owns admission policy, generation and command recovery.
 
+### Explicit directory role source
+
+For opt-in team-role permission checks, first take a current
+`ObserveDirectorySource` and pass it to `ReadDirectoryGroupRoleEdges`.
+The batch verifies up to 128 direct Group/User edges, exact stored local
+identity mappings and the original connection in a single primary
+statement. An absent edge, deleted projection, mapping mismatch, or
+explicitly inactive User is not eligible. Unknown source state, corrupt
+storage, or expired evidence returns no usable results. Keep the original
+validity bound and do not cache results. This is not an SSO provider or
+mapping-policy decision.
+
+For a role-bearing child, bind the original source, Group edge and exact
+organization grant/role fields. `LockDirectoryGroupRole` orders the
+directory, organization and source checks before the organization's role
+update. Keep the original lock for `RequireDirectoryGroupRoleAtCommit`
+after rechecking the organization effect. It accepts only this Work's
+organization successor, not refreshed or guessed source authority. No
+route, scheduler, cursor or audit owner is added; ordinary Group
+reconciliation keeps its original behavior.
+
 ## Transaction and retry semantics
 
 The configured bootstrap and every write use the existing kernel command journal
