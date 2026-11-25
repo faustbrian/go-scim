@@ -177,17 +177,25 @@ func (m DirectoryMapper) MapDirectoryDelta(batch sso.DirectoryDeltaBatch) (Direc
 		if err != nil {
 			return DirectoryMembershipBatch{}, ErrInvalidMappingInput
 		}
-		teamID, groupMapped := state.groups[membership.GroupID]
-		userID, memberMapped := state.members[membership.MemberID]
-		if !groupMapped || !memberMapped {
-			return DirectoryMembershipBatch{}, ErrMappingDenied
+		intent, err := state.mapMembership(membership)
+		if err != nil {
+			return DirectoryMembershipBatch{}, err
 		}
-		intents = append(intents, DirectoryMembershipIntent{
-			CommandID: membership.CommandID, GroupID: membership.GroupID, MemberID: membership.MemberID,
-			TeamID: teamID, UserID: userID, Action: membership.Action,
-		})
+		intents = append(intents, intent)
 	}
 	return DirectoryMembershipBatch{Source: source, Memberships: intents}, nil
+}
+
+func (s *directoryMappingState) mapMembership(membership sso.DirectoryGroupMembership) (DirectoryMembershipIntent, error) {
+	teamID, groupMapped := s.groups[membership.GroupID]
+	userID, memberMapped := s.members[membership.MemberID]
+	if !groupMapped || !memberMapped {
+		return DirectoryMembershipIntent{}, ErrMappingDenied
+	}
+	return DirectoryMembershipIntent{
+		CommandID: membership.CommandID, GroupID: membership.GroupID, MemberID: membership.MemberID,
+		TeamID: teamID, UserID: userID, Action: membership.Action,
+	}, nil
 }
 
 // Match the SSO source and organization/identity owners' existing 128-byte

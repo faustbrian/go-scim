@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add explicit ordered mixed mapping for User, Group membership and Group role
+  intents. Preserve the original source envelope and fail the entire mapping
+  on conflicting policies or an unselected child; leave execution to SSO.
+
 - Add pure read-only membership drift classification that compares exact source
   attribution separately from independent local grants. Inactive, unproven and
   unobserved states remain conflicts; classification grants no repair authority.

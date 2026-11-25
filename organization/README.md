@@ -24,6 +24,22 @@ The partial result cannot advance the checkpoint and says nothing about
 whether unobserved children committed.
 The mapping module has no database, HTTP routes, scheduler or retry store.
 
+## Ordered mixed reconciliation mapping
+
+Construct `NewDirectoryMixedMapper` with a configured `DirectoryUserMapper`
+and at least one Group policy: a membership `DirectoryMapper`, an explicit
+`DirectoryRoleMapper`, or both. All selected policies must agree on the source
+partition and mapping version. When both Group policies are supplied, their
+source Group IDs must not overlap. Any source User ID shared by two policies
+must select the same local user in both.
+
+`MapDirectoryMixedDelta` returns the detached original SSO batch and one
+typed intent per child in the original order. An intent selects exactly one of
+`User`, `Membership` or `Role`. If any child is unselected or invalid, the
+whole mapping fails with no partial result. Nothing in the output changes
+admission, grants permissions or settles the SSO checkpoint. Keep the existing
+single-profile mappers when mixed mapping is not needed.
+
 ## Opt-in Group role mapping
 
 `NewDirectoryRoleMapper` snapshots the exact Group and member mapping plus
