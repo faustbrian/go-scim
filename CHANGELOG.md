@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preflight the worst-case Bulk response before native admission and serialize
+  terminal child results in request order without exposing skipped children.
+  Bulk execution and discovery remain disabled.
+
 - Parse bounded Bulk requests into an immutable ordered child list and a
   deterministic dependency plan. This does not enable or advertise Bulk.
 

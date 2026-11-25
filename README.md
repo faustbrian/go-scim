@@ -159,6 +159,12 @@ adapter. Supply explicit operation and byte limits. Its immutable plan retains
 the ordered requests and their exact semantic fingerprint input, and puts
 local reference components in prerequisite-first order. It does not persist
 children, allocate IDs, preflight the response, or execute any operation.
+Before persisting children, call `PreflightBulkResponse` with that plan, the
+trusted service root and an explicit response policy. Retain the proved byte
+bound with the admitted parent. The response plan serializes terminal child
+results in original request order, omits unprocessed children, and produces
+no body for unresolved checkpoints. It does not validate database state or
+implement the durable cutoff.
 The selected services continue to report Bulk as unsupported.
 The combined service dispatches Group operations only to GroupStore/GroupMapper
 and User operations only to Store/Mapper. Combined root search requires the

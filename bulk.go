@@ -75,10 +75,11 @@ type BulkComponent struct {
 // must still prove response-size bounds, resource validity, connection scope,
 // durable graph/child custody and the transaction contract before mutation.
 type BulkPlan struct {
-	failOnErrors int
-	operations   []BulkOperation
-	components   []BulkComponent
-	canonical    []byte
+	failOnErrors  int
+	bulkIDPresent []bool
+	operations    []BulkOperation
+	components    []BulkComponent
+	canonical     []byte
 }
 
 // FailOnErrors returns the request threshold, with zero/omission meaning no
@@ -142,7 +143,7 @@ func ParseBulk(body []byte, extensions []Schema, policy BulkPolicy, limits Limit
 	if !exactEnvelope(doc, bulkRequestSchema) || len(children) == 0 {
 		return BulkPlan{}, failure(400, "invalidValue")
 	}
-	plan := BulkPlan{}
+	plan := BulkPlan{bulkIDPresent: make([]bool, len(children)), operations: make([]BulkOperation, 0, len(children))}
 	if raw, supplied := lookup(doc, "failOnErrors"); supplied {
 		number, ok := raw.(json.Number)
 		if !ok {
@@ -176,6 +177,7 @@ func ParseBulk(body []byte, extensions []Schema, policy BulkPolicy, limits Limit
 		canonicalChildren = append(canonicalChildren, child)
 		op := parseBulkOperation(i, child, limits)
 		plan.operations = append(plan.operations, op)
+		_, plan.bulkIDPresent[i] = bulkString(child, "bulkId")
 	}
 	for key := range doc {
 		if strings.EqualFold(key, "Operations") {
