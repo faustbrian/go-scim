@@ -45,6 +45,17 @@ An optional key aliases that parent; using it for different input conflicts.
 Admission itself executes no child and is not a Bulk response. Ordinary Users
 and Groups, HTTP routing and discovery still do not enable Bulk.
 
+Install `BulkChildExecutionMigrationSource` to call `ExecuteChild` with the
+exact original request and a zero-based operation index. This selection runs
+acyclic Group creates in the retained order. The usual Groups schema and
+permission rules apply. An unstarted child requires the parent's original
+authority to remain live; retry does not renew it. A create's projection,
+original kernel journal, outbox, protected `identity.scim.bulk_apply_child`
+audit and result checkpoint commit together. Replay returns the original 201
+identity/version to a currently authorized caller, even if the projection
+later changes. This is a child result, not a terminal Bulk response; other
+child kinds, cyclic execution, and cutoff/reconciliation are not enabled.
+
 ## Composition
 
 1. Borrow one **primary** `go-postgres` pool. Apply the existing owners' forward

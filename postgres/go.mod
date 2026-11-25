@@ -9,12 +9,12 @@ require (
 	github.com/faustbrian/go-authorization/v3 v3.0.1-0.20261015052455-a55bbebb1060
 	github.com/faustbrian/go-clock v1.2.0
 	github.com/faustbrian/go-identity v0.0.0-20261123113741-94b876278a93
-	github.com/faustbrian/go-identity/postgres v0.0.0-20261125073113-b9d9fac2857b
+	github.com/faustbrian/go-identity/postgres v0.0.0-20261125081827-8afe54d7c77f
 	github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc
 	github.com/faustbrian/go-organization v0.0.0-20261122135635-30af6abd1547
 	github.com/faustbrian/go-organization/postgres v0.0.0-20261125064514-0db635e0981d
 	github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7
-	github.com/faustbrian/go-scim v0.0.0-20261125072706-05753a0540da
+	github.com/faustbrian/go-scim v0.0.0-20261125074808-2818feccd8f3
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1
 	github.com/faustbrian/go-transactional-outbox/postgres/identity v0.0.0-20261026011803-e03d6969b19b
 	github.com/faustbrian/go-transactional-outbox/v2 v2.1.1-0.20261022172917-6ed5e0861542

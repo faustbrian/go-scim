@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Execute and recover an admitted acyclic Group create using its original
+  authorization and IDs. Commit its ordinary Group projection and typed
+  result checkpoint together. Routing and discovery remain unchanged.
+
 - Add explicit native Group Bulk admission. Prove the response ceiling before
   retaining one parent and every ordered child and dependency together. Exact
   retries recover the original admission. This does not execute children or

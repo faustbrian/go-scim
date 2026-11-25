@@ -30,7 +30,17 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 		return scim.PreparedWrite{}, identity.ForbiddenError{}
 	}
 	p := &nativePhase{service: b.service, admission: *i, intent: intent}
-	if intent.IdempotencyKey == "" && !nativeDelete(intent.Operation) {
+	if i.bulkChild != nil {
+		if !b.groups || intent.Operation != scim.GroupCreate || intent.IdempotencyKey != "" {
+			return scim.PreparedWrite{}, identity.ForbiddenError{}
+		}
+		p.bulkChild = i.bulkChild
+		p.original = i.bulkChild.original
+		p.coordinator, p.registry, err = b.service.coordinator(p)
+		if err != nil {
+			return scim.PreparedWrite{}, err
+		}
+	} else if intent.IdempotencyKey == "" && !nativeDelete(intent.Operation) {
 		// Pure mapping needs no durable entropy preparation. Keep the root's
 		// original proposal command and invocation-only metadata; Commit still
 		// uses the same authoritative reservation/Work/journal as keyed creates.
@@ -180,6 +190,12 @@ func (b *protocolBridge) commitUpdate(ctx context.Context, p *nativePhase, prepa
 func (b *protocolBridge) executeResourceWrite(ctx context.Context, p *nativePhase) (scim.WriteResult, error) {
 	result, err := p.execute(ctx)
 	if result.Outcome == identity.CommitOutcomeCommitted && err == nil {
+		if p.bulkChild != nil {
+			if err := b.service.recheckRead(ctx, &p.admission); err != nil {
+				return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, err
+			}
+			return scim.WriteResult{Outcome: scim.WriteOutcomeCommitted, Resource: &p.resource}, nil
+		}
 		stored, readErr := b.readOriginal(ctx, p)
 		if readErr != nil {
 			return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, readErr

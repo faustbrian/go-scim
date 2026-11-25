@@ -19,6 +19,7 @@ import (
 type nativePhase struct {
 	service     *Service
 	bulk        *bulkAdmissionPhase
+	bulkChild   *bulkChildExecution
 	bootstrap   bool
 	admission   invocation
 	original    originalInput
@@ -143,6 +144,9 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 		record = c.Scope.ConnectionID
 	}
 	b := identity.CommandBinding{CommandID: p.original.Command, TenantID: c.Scope.TenantID, UserID: identity.UserID(id), ActorID: c.ActorID, ActorKind: authorization.SubjectServiceAccount, OperationID: op.OperationID, PolicyID: c.PolicyID, PolicyVersion: c.PolicyVersion, SchemaID: op.SchemaID, SchemaVersion: 1, CorrelationID: string(p.original.Command), RecordID: record}
+	if p.bulkChild != nil {
+		b.CorrelationID = string(p.bulkChild.parent)
+	}
 	intent, err := p.service.requestIntent(canonical, op.OperationID)
 	if err != nil {
 		return err
@@ -153,6 +157,9 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 		return err
 	}
 	fields = append(fields, identity.FeatureField{Name: "scim.admission", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: admissionDigest[:]}})
+	if p.bulkChild != nil {
+		fields = append(fields, identity.FeatureField{Name: "scim.bulk.child", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: p.bulkChild.row.Fingerprint}})
+	}
 	if nativeMutation(p.intent.Operation) {
 		// The original resource CAS and target-security observation are frozen in
 		// the existing preparation. Bind all of them to this exact kernel command;
@@ -221,7 +228,7 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 }
 
 func (p *nativePhase) ValidateFeatureCommand(command identity.Command, plan kernel.CommandPlan) error {
-	if p == nil || p.service == nil || command != p.command || command == (identity.Command{}) || plan.Feature == nil || *plan.Feature != p.registration() || plan.SubjectType != p.subjectType() || plan.Lifecycle == nil || *plan.Lifecycle != p.lifecycle() || len(plan.Audits) != 1 || plan.Audits[0].EventType != p.operation().OperationID {
+	if p == nil || p.service == nil || command != p.command || command == (identity.Command{}) || plan.Feature == nil || *plan.Feature != p.registration() || plan.SubjectType != p.subjectType() || plan.Lifecycle == nil || *plan.Lifecycle != p.lifecycle() || len(plan.Audits) != 1 || plan.Audits[0].EventType != p.auditAction() {
 		return identity.InvalidInputError{Field: "scim_command"}
 	}
 	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
@@ -233,6 +240,13 @@ func (p *nativePhase) ValidateFeatureCommand(command identity.Command, plan kern
 		return identity.InvalidInputError{Field: "scim_update_plan"}
 	}
 	return nil
+}
+
+func (p *nativePhase) auditAction() string {
+	if p.bulkChild != nil {
+		return "identity.scim.bulk_apply_child"
+	}
+	return p.operation().OperationID
 }
 
 func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command identity.Command) (identity.FeatureReceipt, error) {
@@ -256,6 +270,9 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 			return identity.FeatureReceipt{}, identity.ConflictError{}
 		}
 	} else if p.group() {
+		if p.bulkChild != nil {
+			return p.applyBulkGroupChild(ctx, w)
+		}
 		return p.applyGroupProjection(ctx, w)
 	} else if nativeMutation(p.intent.Operation) {
 		if err := p.requireOriginalProjection(ctx, w); err != nil {
@@ -383,7 +400,11 @@ func (p *nativePhase) executionPlan() (kernel.CommandPlan, error) {
 	if err != nil {
 		return kernel.CommandPlan{}, err
 	}
-	seed, err := builder.Build(audit.RecordInput{OccurredAt: p.original.At, Action: op.OperationID, Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: audit.ActorService, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: p.subjectType(), ID: b.RecordID}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": p.subjectType(), "aggregate.id": b.RecordID, "aggregate.before_version": strconv.FormatUint(lifecycle.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(lifecycle.AfterVersion, 10), "retention.class": "protected"}})
+	action, auditType, auditTarget := p.auditAction(), p.subjectType(), b.RecordID
+	if p.bulkChild != nil {
+		auditType, auditTarget = "scim_bulk_child", string(b.CommandID)
+	}
+	seed, err := builder.Build(audit.RecordInput{OccurredAt: p.original.At, Action: action, Outcome: audit.OutcomeSucceeded, Actor: audit.ActorInput{Kind: audit.ActorService, ID: string(b.ActorID)}, Subject: audit.SubjectInput{Type: auditType, ID: auditTarget}, Context: audit.ContextInput{TenantID: string(b.TenantID), CorrelationID: b.CorrelationID}, Policy: audit.PolicyMetadata{PolicyID: b.PolicyID, Version: strconv.FormatUint(b.PolicyVersion, 10)}, Changes: audit.ChangeSetInput{Redacted: true}, Attributes: map[string]string{"command.id": string(b.CommandID), "aggregate.type": auditType, "aggregate.id": auditTarget, "aggregate.before_version": strconv.FormatUint(lifecycle.BeforeVersion, 10), "aggregate.after_version": strconv.FormatUint(lifecycle.AfterVersion, 10), "retention.class": "protected"}})
 	if err != nil {
 		return kernel.CommandPlan{}, err
 	}
@@ -392,7 +413,7 @@ func (p *nativePhase) executionPlan() (kernel.CommandPlan, error) {
 		return kernel.CommandPlan{}, err
 	}
 	registration := p.registration()
-	plan := kernel.CommandPlan{Contributors: p.registry.Descriptors(), Feature: &registration, SubjectType: p.subjectType(), Lifecycle: &lifecycle, Audits: []kernel.AuditPlan{{EventType: op.OperationID, SchemaVersion: 1, Required: true, RequiredRecordCount: 1, MaxRecordBytes: 16384, MaxAggregateBytes: 16384, RetentionPolicyVersion: 1, RetentionClass: "protected", BindingDigest: digest}}}
+	plan := kernel.CommandPlan{Contributors: p.registry.Descriptors(), Feature: &registration, SubjectType: p.subjectType(), Lifecycle: &lifecycle, Audits: []kernel.AuditPlan{{EventType: action, SchemaVersion: 1, Required: true, RequiredRecordCount: 1, MaxRecordBytes: 16384, MaxAggregateBytes: 16384, RetentionPolicyVersion: 1, RetentionClass: "protected", BindingDigest: digest}}}
 	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
 		plan.SCIMUserUpdate = &kernel.SCIMUserUpdatePlan{Required: len(p.update.Attributes) > 0, ExpectedVersion: p.update.ExpectedVersion}
 	}

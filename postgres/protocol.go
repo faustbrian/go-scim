@@ -29,6 +29,7 @@ type invocation struct {
 	epoch        uint64
 	directory    kernel.DirectoryAuthorityAdmission
 	phase        *nativePhase
+	bulkChild    *bulkChildExecution
 }
 
 type protocolBridge struct {

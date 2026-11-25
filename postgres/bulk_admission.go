@@ -15,10 +15,11 @@ import (
 )
 
 // GroupBulkService explicitly selects durable admission for the configured
-// Group projection. It does not enable discovery, an HTTP route or execution.
+// Group projection. It does not enable discovery or an HTTP route.
 // Its pool and authority remain borrowed from the ordinary Group service.
 type GroupBulkService struct {
 	native   *Service
+	groups   *scim.GroupsService
 	request  scim.BulkPolicy
 	response scim.BulkResponsePolicy
 	profile  [32]byte
@@ -45,7 +46,7 @@ func NewGroupBulkService(groups *GroupsService, request scim.BulkPolicy, respons
 	if err != nil {
 		return nil, ErrInvalidConfiguration
 	}
-	return &GroupBulkService{native: groups.native, request: request, response: response, profile: sha256.Sum256(wire)}, nil
+	return &GroupBulkService{native: groups.native, groups: groups.protocol, request: request, response: response, profile: sha256.Sum256(wire)}, nil
 }
 
 // Format redacts the selected connection and its borrowed runtime.
@@ -99,28 +100,40 @@ func (s *GroupBulkService) Admit(ctx context.Context, request BulkAdmissionReque
 			result, err = BulkAdmission{}, bulkProtocolError(err)
 		}
 	}()
+	p, _, err := s.admitGraph(ctx, request, nil)
+	if err != nil {
+		return BulkAdmission{}, err
+	}
+	return BulkAdmission{CommandID: p.original.Command, ChildCount: len(p.bulk.children), ResponseMaximumBytes: p.bulk.maximum}, nil
+}
+
+func (s *GroupBulkService) admitGraph(ctx context.Context, request BulkAdmissionRequest, ordinal *int) (*nativePhase, scim.BulkPlan, error) {
+	c := s.native.config()
 	i := new(invocation)
 	ctx = context.WithValue(ctx, invocationKey{}, i)
 	bridge := protocolBridge{service: s.native, groups: true}
 	if _, err := bridge.Authenticate(ctx, request.Credential); err != nil {
-		return BulkAdmission{}, scim.NewError(401, "")
+		return nil, scim.BulkPlan{}, scim.NewError(401, "")
 	}
 	operation := string(scim.Bulk)
 	if err := s.native.decide(ctx, operation, c.Scope.ConnectionID, "identity.scim.bulk"); err != nil {
-		return BulkAdmission{}, err
+		return nil, scim.BulkPlan{}, err
 	}
 	plan, err := scim.ParseBulk(request.Body, nil, s.request, c.Limits)
 	if err != nil {
-		return BulkAdmission{}, err
+		return nil, scim.BulkPlan{}, err
 	}
 	response, err := scim.PreflightBulkResponse(plan, c.BaseURL, s.response)
 	if err != nil {
-		return BulkAdmission{}, err
+		return nil, scim.BulkPlan{}, err
 	}
 	children := plan.Operations()
+	if ordinal != nil && (*ordinal < 0 || *ordinal >= len(children)) {
+		return nil, scim.BulkPlan{}, scim.NewError(400, "invalidValue")
+	}
 	for _, child := range children {
 		if child.Target.ResourceType == "User" {
-			return BulkAdmission{}, scim.NewError(501, "")
+			return nil, scim.BulkPlan{}, scim.NewError(501, "")
 		}
 	}
 	canonical := plan.CanonicalRequest()
@@ -129,22 +142,22 @@ func (s *GroupBulkService) Admit(ctx context.Context, request BulkAdmissionReque
 		children: children, components: plan.Components(), cutoff: plan.FailOnErrors(), maximum: response.MaximumBytes(), profile: s.profile,
 	}}
 	if err := p.resolveBulkOriginal(ctx, canonical, request.IdempotencyKey); err != nil {
-		return BulkAdmission{}, err
+		return nil, scim.BulkPlan{}, err
 	}
 	receipt, err := p.execute(ctx)
 	if err != nil {
-		return BulkAdmission{}, err
+		return nil, scim.BulkPlan{}, err
 	}
 	if receipt.Outcome != identity.CommitOutcomeCommitted {
-		return BulkAdmission{}, scim.NewError(503, "")
+		return nil, scim.BulkPlan{}, scim.NewError(503, "")
 	}
 	if err := p.requireCommittedBulkAdmission(ctx); err != nil {
-		return BulkAdmission{}, err
+		return nil, scim.BulkPlan{}, err
 	}
 	if err := s.native.recheckRead(ctx, i); err != nil {
-		return BulkAdmission{}, err
+		return nil, scim.BulkPlan{}, err
 	}
-	return BulkAdmission{CommandID: p.original.Command, ChildCount: len(children), ResponseMaximumBytes: response.MaximumBytes()}, nil
+	return p, plan, nil
 }
 
 func bulkProtocolError(err error) error {
