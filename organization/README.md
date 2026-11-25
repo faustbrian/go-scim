@@ -72,5 +72,21 @@ executor may support a narrower batch size than the pure mapper. The User
 mapper does not implement the SSO contributor and does not change the existing
 Group mapper or reconciler contract.
 
+## Read-only membership drift classification
+
+`ClassifyDirectoryMembershipDrift` compares explicit source membership evidence
+with an observed grant attributed to that exact source. It reports in-sync,
+missing-source-grant or unexpected-source-grant state. An independent local
+grant is reported separately as `LocalGrant` and never substitutes for a source
+grant. Inactive source Users, unproven source evidence and unobserved local
+state report conflict, even when no source-attributed grant exists.
+
+Zero or unknown source states and attribution/local flags without a completed
+local observation return `ErrInvalidMappingInput` with zero output. The caller
+must obtain exact-scope authoritative observations; classification does not
+establish freshness, select repair or withdrawal policy, issue commands, or
+advance an SSO cursor. Implicit formatting and logging redact observations;
+implicit JSON and text serialization return `ErrSensitiveSerialization`.
+
 These selected profiles do not qualify broader SCIM identity provisioning,
 global identity suspension/deletion or full organization reconciliation.

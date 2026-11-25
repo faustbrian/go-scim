@@ -194,6 +194,12 @@ storage, or expired evidence returns no usable results. Keep the original
 validity bound and do not cache results. This is not an SSO provider or
 mapping-policy decision.
 
+For drift inspection, `ReadDirectoryGroupEdgeStates` uses the same bounded
+primary read but distinguishes a proven absence from a missing projection or
+changed identity link. A still-present edge to an inactive or deleted User is
+reported separately, not treated as automatic removal authority. The legacy
+role query still returns true only for a live exact edge to an active User.
+
 For a role-bearing child, bind the original source, Group edge and exact
 organization grant/role fields. `LockDirectoryGroupRole` orders the
 directory, organization and source checks before the organization's role

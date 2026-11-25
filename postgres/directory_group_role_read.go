@@ -24,6 +24,23 @@ func (DirectoryGroupRoleEdge) Format(s fmt.State, _ rune) {
 	_, _ = s.Write([]byte("scimpostgres.DirectoryGroupRoleEdge(redacted)"))
 }
 
+// DirectoryGroupEdgeState is an observation of source data, not permission
+// or authority to apply a delta. Zero is not a returned state.
+type DirectoryGroupEdgeState uint8
+
+const (
+	// DirectoryGroupEdgePresent identifies a live direct edge to the exact active User.
+	DirectoryGroupEdgePresent DirectoryGroupEdgeState = iota + 1
+	// DirectoryGroupEdgeAbsent requires a known Group and exact retained User link.
+	DirectoryGroupEdgeAbsent
+	// DirectoryGroupEdgeInactiveUser identifies a direct edge to the exact inactive
+	// or deleted User. A separate lifecycle policy must decide how to handle it.
+	DirectoryGroupEdgeInactiveUser
+	// DirectoryGroupEdgeUnproven indicates a missing projection or changed User link.
+	// It is not evidence that a local contribution should be removed.
+	DirectoryGroupEdgeUnproven
+)
+
 // ReadDirectoryGroupRoleEdges checks 1..128 edges in input order on the
 // configured primary, with one snapshot of the exact connection and resources.
 // False means no direct live edge for the exact local identity (including an
@@ -32,6 +49,23 @@ func (DirectoryGroupRoleEdge) Format(s fmt.State, _ rune) {
 // deadline is not extended. This is trusted composition, not SCIM bearer
 // admission, a permission decision, or an SSO provider/mapping check.
 func (s *GroupsService) ReadDirectoryGroupRoleEdges(ctx context.Context, observation DirectorySourceObservation, edges []DirectoryGroupRoleEdge) ([]bool, error) {
+	states, err := s.ReadDirectoryGroupEdgeStates(ctx, observation, edges)
+	if err != nil {
+		return nil, err
+	}
+	matches := make([]bool, len(states))
+	for i, state := range states {
+		matches[i] = state == DirectoryGroupEdgePresent
+	}
+	return matches, nil
+}
+
+// ReadDirectoryGroupEdgeStates observes 1..128 edges in input order with the
+// original source scope, primary snapshot and freshness bound. A retained
+// tombstone can prove absence; a missing row or mismatched User link cannot.
+// Malformed data, unavailable authority and expiry return an error and no
+// usable prefix. This method never mutates a projection or renews evidence.
+func (s *GroupsService) ReadDirectoryGroupEdgeStates(ctx context.Context, observation DirectorySourceObservation, edges []DirectoryGroupRoleEdge) ([]DirectoryGroupEdgeState, error) {
 	if s == nil || s.native == nil || s.native.config == nil || ctx == nil || observation.source != s.native ||
 		len(edges) == 0 || len(edges) > maximumDirectoryGroupRoleEdges {
 		return nil, identity.ForbiddenError{}
@@ -64,7 +98,7 @@ func (s *GroupsService) ReadDirectoryGroupRoleEdges(ctx context.Context, observa
 		return nil, identity.UnavailableError{}
 	}
 	defer rows.Close()
-	results := make([]bool, 0, len(edges))
+	results := make([]DirectoryGroupEdgeState, 0, len(edges))
 	for rows.Next() {
 		var ordinal int64
 		var groupFound, groupDeleted, userFound, userDeleted bool
@@ -74,11 +108,11 @@ func (s *GroupsService) ReadDirectoryGroupRoleEdges(ctx context.Context, observa
 			ordinal != int64(len(results)+1) || len(results) >= len(edges) {
 			return nil, identity.UnavailableError{}
 		}
-		match, err := checkDirectoryGroupRoleEdge(edges[len(results)], c.BaseURL, groupFound, groupDeleted, groupWire, userFound, userDeleted, localUser, userWire)
+		state, err := classifyDirectoryGroupEdge(edges[len(results)], c.BaseURL, groupFound, groupDeleted, groupWire, userFound, userDeleted, localUser, userWire)
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, match)
+		results = append(results, state)
 	}
 	if rows.Err() != nil || len(results) != len(edges) {
 		return nil, identity.UnavailableError{}
@@ -102,44 +136,54 @@ func directoryGroupRoleEdgeArguments(native *Service, b DirectorySourceBindings,
 		c.Credential.id, c.Credential.expected[:], native.profile[:], c.CredentialExpiresAt, b.ValidUntil, groups, members)
 }
 
-func checkDirectoryGroupRoleEdge(edge DirectoryGroupRoleEdge, baseURL string, groupFound, groupDeleted bool, groupWire []byte, userFound, userDeleted bool, localUser string, userWire []byte) (bool, error) {
+func classifyDirectoryGroupEdge(edge DirectoryGroupRoleEdge, baseURL string, groupFound, groupDeleted bool, groupWire []byte, userFound, userDeleted bool, localUser string, userWire []byte) (DirectoryGroupEdgeState, error) {
 	defer clear(groupWire)
 	defer clear(userWire)
 	present := false
 	if groupFound {
 		if groupDeleted {
 			if !bytes.Equal(groupWire, []byte("null")) {
-				return false, identity.UnavailableError{}
+				return 0, identity.UnavailableError{}
 			}
 		} else {
 			group, err := directoryGroupEdgeResource(groupWire, edge.GroupID, "Group")
 			if err != nil {
-				return false, identity.UnavailableError{}
+				return 0, identity.UnavailableError{}
 			}
 			present, err = directoryGroupEdgePresent(group, edge.MemberResourceID, baseURL)
 			if err != nil {
-				return false, identity.UnavailableError{}
+				return 0, identity.UnavailableError{}
 			}
 		}
 	}
 	if !userFound {
-		return false, nil
+		return DirectoryGroupEdgeUnproven, nil
 	}
+	active := false
 	if userDeleted {
 		if !bytes.Equal(userWire, []byte("null")) {
-			return false, identity.UnavailableError{}
+			return 0, identity.UnavailableError{}
 		}
-		return false, nil
+	} else {
+		user, err := directoryGroupEdgeResource(userWire, edge.MemberResourceID, "User")
+		if err != nil {
+			return 0, identity.UnavailableError{}
+		}
+		active, err = directoryGroupRoleUserActive(user)
+		if err != nil {
+			return 0, err
+		}
 	}
-	user, err := directoryGroupEdgeResource(userWire, edge.MemberResourceID, "User")
-	if err != nil {
-		return false, identity.UnavailableError{}
+	switch {
+	case !groupFound || localUser != string(edge.UserID):
+		return DirectoryGroupEdgeUnproven, nil
+	case !present:
+		return DirectoryGroupEdgeAbsent, nil
+	case !active:
+		return DirectoryGroupEdgeInactiveUser, nil
+	default:
+		return DirectoryGroupEdgePresent, nil
 	}
-	active, err := directoryGroupRoleUserActive(user)
-	if err != nil {
-		return false, err
-	}
-	return active && present && localUser == string(edge.UserID), nil
 }
 
 func directoryGroupRoleUserActive(user scim.Resource) (bool, error) {

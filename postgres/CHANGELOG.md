@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Expose bounded exact Group edge states for drift inspection. Distinguish
+  proven absence, an inactive User and an unproven link while preserving the
+  existing boolean role-eligibility API.
+
 - Read exact current Group role edges in an ordered bounded primary batch
   and compose role-bearing Work with its own organization successor.
   Existing Group and User reconciliation remains unchanged.

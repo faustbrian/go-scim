@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add pure read-only membership drift classification that compares exact source
+  attribution separately from independent local grants. Inactive, unproven and
+  unobserved states remain conflicts; classification grants no repair authority.
+
 - Add an explicit, exact-scope Group role mapper. Retain original child
   commands and require a configured custom role for every selected team.
   No role or authority is inferred from source identifiers.
