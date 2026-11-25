@@ -80,6 +80,8 @@ type BulkPlan struct {
 	operations    []BulkOperation
 	components    []BulkComponent
 	canonical     []byte
+	extensions    []Schema
+	limits        Limits
 }
 
 // FailOnErrors returns the request threshold, with zero/omission meaning no
@@ -143,7 +145,7 @@ func ParseBulk(body []byte, extensions []Schema, policy BulkPolicy, limits Limit
 	if !exactEnvelope(doc, bulkRequestSchema) || len(children) == 0 {
 		return BulkPlan{}, failure(400, "invalidValue")
 	}
-	plan := BulkPlan{bulkIDPresent: make([]bool, len(children)), operations: make([]BulkOperation, 0, len(children))}
+	plan := BulkPlan{bulkIDPresent: make([]bool, len(children)), operations: make([]BulkOperation, 0, len(children)), extensions: cloneSchemas(extensions), limits: limits}
 	if raw, supplied := lookup(doc, "failOnErrors"); supplied {
 		number, ok := raw.(json.Number)
 		if !ok {
@@ -349,8 +351,20 @@ func parseBulkTarget(method, path string, pathBytes int) (BulkTarget, bool) {
 	return target, safeID(target.ResourceID)
 }
 
+type bulkReferenceForm uint8
+
+const (
+	bulkReferenceURI bulkReferenceForm = iota
+	bulkReferenceID
+)
+
 type bulkReference struct {
 	id, resourceType string
+	// These transient slots belong only to the detached decoded body. Planning
+	// and resolution share traversal, but never retain setters in the plan.
+	set     func(string)
+	setKind func(string)
+	form    bulkReferenceForm
 }
 
 func (p *BulkPlan) resolveBulkReferences(extensions []Schema, limits Limits) error {
@@ -368,7 +382,7 @@ func (p *BulkPlan) resolveBulkReferences(extensions []Schema, limits Limits) err
 		op := &p.operations[i]
 		var references []bulkReference
 		if op.Target.BulkID != "" {
-			references = append(references, bulkReference{op.Target.BulkID, op.Target.ResourceType})
+			references = append(references, bulkReference{id: op.Target.BulkID, resourceType: op.Target.ResourceType})
 		}
 		if op.Error == nil && len(op.Data) != 0 {
 			doc, err := decodeObject(op.Data, limits)
@@ -426,9 +440,12 @@ func bulkBodyReferences(doc map[string]any, op *BulkOperation, extensions []Sche
 		value, _ := lookup(patchOp, "value")
 		if !supplied {
 			if object, ok := value.(map[string]any); ok {
-				refs, err := bulkDocumentReferences(object, core, extensions)
+				refs, err := bulkPathlessReferences(object, op, core, extensions, limits)
 				if err != nil {
 					return nil, err
+				}
+				if op.Error != nil {
+					return nil, nil
 				}
 				out = append(out, refs...)
 			}
@@ -446,7 +463,42 @@ func bulkBodyReferences(doc map[string]any, op *BulkOperation, extensions []Sche
 			attribute = parsed.tail.attribute()
 		}
 		member := core.ID == groupSchema && len(parsed.path.parts) != 0 && strings.EqualFold(parsed.path.parts[0].Name, "members") && parsed.path.extension == ""
-		refs, err := bulkAttributeReferences(value, attribute, member)
+		refs, err := bulkAttributeReferences(value, attribute, member, bulkMapSetter(patchOp, "value"))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, refs...)
+	}
+	return out, nil
+}
+
+func bulkPathlessReferences(doc map[string]any, op *BulkOperation, core Schema, extensions []Schema, limits Limits) ([]bulkReference, error) {
+	var out []bulkReference
+	for name, value := range doc {
+		if extension, found := extensionSchema(extensions, name); found {
+			object, ok := value.(map[string]any)
+			if !ok {
+				op.Error = failure(400, "invalidValue")
+				return nil, nil
+			}
+			refs, err := bulkDocumentReferences(object, extension, nil)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, refs...)
+			continue
+		}
+		parsed, err := parsePatchPath(name, extensions, limits, core)
+		if err != nil {
+			op.Error = failure(400, "invalidPath")
+			return nil, nil
+		}
+		attribute := parsed.path.attribute()
+		if len(parsed.tail.parts) != 0 {
+			attribute = parsed.tail.attribute()
+		}
+		member := core.ID == groupSchema && parsed.path.extension == "" && len(parsed.path.parts) != 0 && strings.EqualFold(parsed.path.parts[0].Name, "members")
+		refs, err := bulkAttributeReferences(value, attribute, member, bulkMapSetter(doc, name))
 		if err != nil {
 			return nil, err
 		}
@@ -473,7 +525,7 @@ func bulkDocumentReferences(doc map[string]any, schema Schema, extensions []Sche
 			continue
 		}
 		coreGroupMember := schema.ID == groupSchema && strings.EqualFold(name, "members")
-		refs, err := bulkAttributeReferences(value, attribute, coreGroupMember)
+		refs, err := bulkAttributeReferences(value, attribute, coreGroupMember, bulkMapSetter(doc, name))
 		if err != nil {
 			return nil, err
 		}
@@ -482,11 +534,11 @@ func bulkDocumentReferences(doc map[string]any, schema Schema, extensions []Sche
 	return out, nil
 }
 
-func bulkAttributeReferences(value any, attribute Attribute, member bool) ([]bulkReference, error) {
+func bulkAttributeReferences(value any, attribute Attribute, member bool, set func(string)) ([]bulkReference, error) {
 	if values, ok := value.([]any); ok {
 		var out []bulkReference
-		for _, item := range values {
-			refs, err := bulkAttributeReferences(item, attribute, member)
+		for index, item := range values {
+			refs, err := bulkAttributeReferences(item, attribute, member, func(text string) { values[index] = text })
 			if err != nil {
 				return nil, err
 			}
@@ -499,11 +551,15 @@ func bulkAttributeReferences(value any, attribute Attribute, member bool) ([]bul
 			return bulkMemberReferences(object)
 		}
 		if strings.EqualFold(attribute.Name, "value") || attribute.Type == "reference" {
-			return bulkReferenceValue(value, "")
+			form := bulkReferenceURI
+			if strings.EqualFold(attribute.Name, "value") {
+				form = bulkReferenceID
+			}
+			return bulkReferenceSlot(value, "", set, form)
 		}
 	}
 	if attribute.Type == "reference" {
-		return bulkReferenceValue(value, "")
+		return bulkReferenceSlot(value, "", set, bulkReferenceURI)
 	}
 	if attribute.Type == "complex" {
 		if object, ok := value.(map[string]any); ok {
@@ -515,6 +571,11 @@ func bulkAttributeReferences(value any, attribute Attribute, member bool) ([]bul
 
 func bulkMemberReferences(member map[string]any) ([]bulkReference, error) {
 	typ, _ := bulkString(member, "type")
+	if raw, supplied := lookup(member, "type"); supplied && raw != nil {
+		if _, ok := raw.(string); !ok {
+			return nil, failure(400, "invalidValue")
+		}
+	}
 	if strings.EqualFold(typ, "user") {
 		typ = "User"
 	}
@@ -524,7 +585,11 @@ func bulkMemberReferences(member map[string]any) ([]bulkReference, error) {
 	var out []bulkReference
 	for _, key := range []string{"value", "$ref"} {
 		value, _ := lookup(member, key)
-		refs, err := bulkReferenceValue(value, typ)
+		form := bulkReferenceURI
+		if key == "value" {
+			form = bulkReferenceID
+		}
+		refs, err := bulkReferenceSlot(value, typ, bulkMapSetter(member, key), form)
 		if err != nil {
 			return nil, err
 		}
@@ -542,7 +607,42 @@ func bulkMemberReferences(member map[string]any) ([]bulkReference, error) {
 			return nil, failure(400, "invalidValue")
 		}
 	}
+	if typ == "" {
+		// Group normalization otherwise defaults a member with no type/$ref to
+		// User. Preserve the referenced create's actual partition, including a
+		// Group self-loop. Missing, null and empty type have the same semantics;
+		// retain every supplied non-empty type string unchanged.
+		setKind := bulkMapSetter(member, "type")
+		if setKind == nil {
+			setKind = func(kind string) { member["type"] = kind }
+		}
+		for index := range out {
+			out[index].setKind = setKind
+		}
+	}
 	return out, nil
+}
+
+func bulkMapSetter(doc map[string]any, name string) func(string) {
+	for key := range doc {
+		if strings.EqualFold(key, name) {
+			return func(text string) { doc[key] = text }
+		}
+	}
+	return nil
+}
+
+func bulkReferenceSlot(value any, resourceType string, set func(string), form bulkReferenceForm) ([]bulkReference, error) {
+	if value != nil {
+		if _, ok := value.(string); !ok {
+			return nil, failure(400, "invalidValue")
+		}
+	}
+	refs, err := bulkReferenceValue(value, resourceType)
+	for index := range refs {
+		refs[index].set, refs[index].form = set, form
+	}
+	return refs, err
 }
 
 func bulkReferenceValue(value any, resourceType string) ([]bulkReference, error) {
@@ -555,18 +655,19 @@ func bulkReferenceValue(value any, resourceType string) ([]bulkReference, error)
 		if !ok || resourceType != "" && resourceType != target.ResourceType {
 			return nil, failure(400, "invalidValue")
 		}
-		return []bulkReference{{target.BulkID, target.ResourceType}}, nil
+		return []bulkReference{{id: target.BulkID, resourceType: target.ResourceType}}, nil
 	}
 	if strings.HasPrefix(text, "bulkId:") {
 		id := strings.TrimPrefix(text, "bulkId:")
 		if !safeBulkID(id) {
 			return nil, failure(400, "invalidValue")
 		}
-		return []bulkReference{{id, resourceType}}, nil
+		return []bulkReference{{id: id, resourceType: resourceType}}, nil
 	}
-	// Absolute same-request placeholders cannot be assigned connection scope by
-	// this pure planner. A native owner must not resolve them as external IDs.
-	if parsed, err := url.Parse(text); err == nil && parsed.IsAbs() && strings.Contains(parsed.Path, "/bulkId:") {
+	// Only the exact forms above establish request-local identity. Absolute,
+	// foreign-relative and encoded placeholder paths cannot silently become
+	// literal resource references outside this request's dependency graph.
+	if parsed, err := url.Parse(text); err == nil && strings.Contains(parsed.Path, "/bulkId:") {
 		return nil, failure(400, "invalidValue")
 	}
 	return nil, nil

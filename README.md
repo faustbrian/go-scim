@@ -165,6 +165,10 @@ bound with the admitted parent. The response plan serializes terminal child
 results in original request order, omits unprocessed children, and produces
 no body for unresolved checkpoints. It does not validate database state or
 implement the durable cutoff.
+An executor can use `BulkPlan.ResolveOperation` on the original child index
+with server IDs retained at admission. It substitutes only schema-declared
+references and preserves the original request for replay. It does not look up
+resources, establish their existence or grant execution authority.
 The selected services continue to report Bulk as unsupported.
 The combined service dispatches Group operations only to GroupStore/GroupMapper
 and User operations only to Store/Mapper. Combined root search requires the

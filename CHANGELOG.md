@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Resolve request-local Bulk targets and schema-declared references using IDs
+  from the native admission, including forward and cyclic references. Ordinary
+  strings and the original request fingerprint input are unchanged.
+
 - Preflight the worst-case Bulk response before native admission and serialize
   terminal child results in request order without exposing skipped children.
   Bulk execution and discovery remain disabled.
