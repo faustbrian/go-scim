@@ -169,6 +169,19 @@ registered User child. These checks do not select a disposition, mutate
 membership, or suspend an identity. SCIM User CRUD alone retains its
 existing projection-only behavior.
 
+When the selected SSO child also changes directory-owned organization
+membership, bind `DirectoryUserMembershipEvidence.Field` to the original
+command. An explicitly active revision uses the User admission operation;
+explicit inactivity or a retained delete tombstone uses deprovisioning.
+`LockDirectoryUserMembership` holds the existing directory authority,
+organization and SCIM connection locks in that order and verifies the exact
+stored User before returning the lock to the organization writer. Propagate
+errors. Recheck the organization effect and call
+`RequireDirectoryUserMembershipAtCommit` during the original final phase.
+It recognizes only that Work's own organization successor and never extends
+the source observation lifetime. Group fences and standalone User CRUD stay
+unchanged. The caller owns admission policy, generation and command recovery.
+
 ## Transaction and retry semantics
 
 The configured bootstrap and every write use the existing kernel command journal

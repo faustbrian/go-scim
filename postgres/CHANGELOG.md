@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fence SCIM User admission and withdrawal in the same transaction as the
+  organization effect. Final source checks accept only that command's own
+  organization successor and retain the original authority deadline.
+
 - Fence the exact revision of an inactive or deleted SCIM User in the
   original SSO deprovisioning child's Work. A different identity, source
   revision, or later reactivation cannot authorize withdrawal.

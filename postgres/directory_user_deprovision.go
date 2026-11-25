@@ -84,6 +84,17 @@ func (s *GroupsService) requireDirectoryUserDeprovision(ctx context.Context, w k
 	if err != nil {
 		return err
 	}
+	if err := requireDirectoryUserField(command, expected); err != nil {
+		return err
+	}
+	state := DirectoryMembershipUserInactive
+	if evidence.Deleted {
+		state = DirectoryMembershipUserDeleted
+	}
+	return s.requireDirectoryMembershipUser(ctx, w, command, observation, DirectoryUserMembershipEvidence{ResourceID: evidence.ResourceID, Revision: evidence.Revision, State: state})
+}
+
+func requireDirectoryUserField(command identity.Command, expected identity.FeatureField) error {
 	spec, ok := command.Feature()
 	if !ok {
 		return identity.ForbiddenError{}
@@ -101,6 +112,10 @@ func (s *GroupsService) requireDirectoryUserDeprovision(ctx context.Context, w k
 	if matches != 1 {
 		return identity.ForbiddenError{}
 	}
+	return nil
+}
+
+func (s *GroupsService) requireDirectoryMembershipUser(ctx context.Context, w kernel.Work, command identity.Command, observation DirectorySourceObservation, evidence DirectoryUserMembershipEvidence) error {
 	ctx, cancel := context.WithTimeout(ctx, s.native.config().MaximumDuration)
 	defer cancel()
 	// The source fence holds scim.connections FOR UPDATE, the serialization
@@ -119,7 +134,8 @@ func (s *GroupsService) requireDirectoryUserDeprovision(ctx context.Context, w k
 	}
 	rows.Close()
 	defer clear(wire)
-	if userID != string(spec.Binding.UserID) || deleted != evidence.Deleted {
+	spec, ok := command.Feature()
+	if !ok || userID != string(spec.Binding.UserID) || deleted != (evidence.State == DirectoryMembershipUserDeleted) {
 		return identity.ForbiddenError{}
 	}
 	if deleted {
@@ -134,7 +150,7 @@ func (s *GroupsService) requireDirectoryUserDeprovision(ctx context.Context, w k
 			return identity.ForbiddenError{}
 		}
 		active, explicit := resource.Attributes["active"].(bool)
-		if !explicit || active {
+		if !explicit || active != (evidence.State == DirectoryMembershipUserActive) {
 			return identity.ForbiddenError{}
 		}
 	}

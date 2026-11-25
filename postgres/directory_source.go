@@ -217,26 +217,12 @@ func directoryGroupSourceRegistration() kernel.FeatureRegistration {
 }
 
 func (s *GroupsService) requireDirectorySource(ctx context.Context, w kernel.Work, owner kernel.FeatureExecutionContributor, command identity.Command, observation DirectorySourceObservation, expected kernel.FeatureRegistration) error {
-	if s == nil || s.native == nil || s.native.config == nil || ctx == nil || observation.source != s.native {
-		return identity.ForbiddenError{}
-	}
-	binding, registration, _, err := w.FeatureScope(owner)
+	bindings, err := s.directorySourceBinding(ctx, w, owner, command, observation, expected)
 	if err != nil {
-		return identity.ForbiddenError{}
-	}
-	spec, ok := command.Feature()
-	if !ok || spec.Binding != binding || spec.Operation != registration.Operation || registration != expected {
-		return identity.ForbiddenError{}
-	}
-	bindings, err := observation.bindings(ctx)
-	if err != nil || binding.TenantID != bindings.Scope.TenantID || binding.ActorKind != authorization.SubjectServiceAccount || binding.ActorID != bindings.ActorID {
-		return identity.ForbiddenError{}
-	}
-	if err := observation.requireCommandField(ctx, spec.Fields); err != nil {
 		return err
 	}
-	native, c := s.native, s.native.config()
-	ctx, cancel := context.WithTimeout(ctx, c.MaximumDuration)
+	native := s.native
+	ctx, cancel := context.WithTimeout(ctx, native.config().MaximumDuration)
 	defer cancel()
 	original := observation.admission
 	if err := w.RequireActiveDirectoryAuthority(ctx, owner, original.directory); err != nil {
@@ -245,6 +231,33 @@ func (s *GroupsService) requireDirectorySource(ctx context.Context, w kernel.Wor
 	if err := native.organizations.RequireCredentialAuthority(ctx, w, owner, original.organization); err != nil {
 		return err
 	}
+	return s.requireDirectorySourceConnection(ctx, w, original, bindings)
+}
+
+func (s *GroupsService) directorySourceBinding(ctx context.Context, w kernel.Work, owner kernel.FeatureExecutionContributor, command identity.Command, observation DirectorySourceObservation, expected kernel.FeatureRegistration) (DirectorySourceBindings, error) {
+	if s == nil || s.native == nil || s.native.config == nil || ctx == nil || observation.source != s.native {
+		return DirectorySourceBindings{}, identity.ForbiddenError{}
+	}
+	binding, registration, _, err := w.FeatureScope(owner)
+	if err != nil {
+		return DirectorySourceBindings{}, identity.ForbiddenError{}
+	}
+	spec, ok := command.Feature()
+	if !ok || spec.Binding != binding || spec.Operation != registration.Operation || registration != expected {
+		return DirectorySourceBindings{}, identity.ForbiddenError{}
+	}
+	bindings, err := observation.bindings(ctx)
+	if err != nil || binding.TenantID != bindings.Scope.TenantID || binding.ActorKind != authorization.SubjectServiceAccount || binding.ActorID != bindings.ActorID {
+		return DirectorySourceBindings{}, identity.ForbiddenError{}
+	}
+	if err := observation.requireCommandField(ctx, spec.Fields); err != nil {
+		return DirectorySourceBindings{}, err
+	}
+	return bindings, nil
+}
+
+func (s *GroupsService) requireDirectorySourceConnection(ctx context.Context, w kernel.Work, original invocation, bindings DirectorySourceBindings) error {
+	native, c := s.native, s.native.config()
 	if err := authoritypg.RequireAuthority(ctx, w, c.authorityScope(), original.epoch, c.MaximumDuration); err != nil {
 		return identity.ForbiddenError{}
 	}
