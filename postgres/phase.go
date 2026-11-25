@@ -18,6 +18,7 @@ import (
 
 type nativePhase struct {
 	service     *Service
+	bulk        *bulkAdmissionPhase
 	bootstrap   bool
 	admission   invocation
 	original    originalInput
@@ -34,7 +35,10 @@ type nativePhase struct {
 func (*nativePhase) Descriptor() kernel.ContributorDescriptor {
 	return kernel.ContributorDescriptor{Owner: "scim/postgres", ContractID: "identity.scim", Version: 1}
 }
-func (*nativePhase) FeatureOperations() []identity.FeatureOperation {
+func (p *nativePhase) FeatureOperations() []identity.FeatureOperation {
+	if p.bulk != nil {
+		return []identity.FeatureOperation{mutationOperation(scim.Bulk)}
+	}
 	return []identity.FeatureOperation{userOperation(), connectionOperation(), mutationOperation(scim.UserReplace), mutationOperation(scim.UserPatch), mutationOperation(scim.UserDelete), mutationOperation(scim.GroupCreate), mutationOperation(scim.GroupReplace), mutationOperation(scim.GroupPatch), mutationOperation(scim.GroupDelete)}
 }
 func userOperation() identity.FeatureOperation {
@@ -51,6 +55,9 @@ func mutationOperation(op scim.Operation) identity.FeatureOperation {
 	return operation
 }
 func (p *nativePhase) operation() identity.FeatureOperation {
+	if p.bulk != nil {
+		return mutationOperation(scim.Bulk)
+	}
 	if p.bootstrap {
 		return connectionOperation()
 	}
@@ -63,6 +70,9 @@ func (p *nativePhase) registration() kernel.FeatureRegistration {
 	return kernel.FeatureRegistration{Contributor: p.Descriptor(), Operation: p.operation()}
 }
 func (p *nativePhase) subjectType() string {
+	if p.bulk != nil {
+		return "scim_bulk"
+	}
 	if p.bootstrap {
 		return "scim_connection"
 	}
@@ -72,6 +82,9 @@ func (p *nativePhase) subjectType() string {
 	return "scim_user"
 }
 func (p *nativePhase) eventType() string {
+	if p.bulk != nil {
+		return "identity.scim.bulk_admitted.v1"
+	}
 	if p.bootstrap {
 		return "identity.scim.connection_created.v1"
 	}
@@ -230,6 +243,9 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		return identity.FeatureReceipt{}, err
 	}
 	c := p.service.config()
+	if p.bulk != nil {
+		return p.applyBulkAdmission(ctx, w)
+	}
 	if p.bootstrap {
 		args := append(scopeArgs(c.Scope), c.Credential.id, c.Credential.expected[:], p.service.profile[:], strconv.FormatUint(c.ConnectionVersion, 10), c.CredentialExpiresAt, strconv.FormatUint(p.original.Admission.AuthorizationEpoch, 10), strconv.FormatUint(p.original.Admission.OrganizationCredentialVersion, 10), string(p.original.Command), p.effect[:])
 		count, err := w.Exec(ctx, `INSERT INTO scim.connections(tenant_id,organization_id,provider_id,connection_id,credential_id,credential_digest,configuration_digest,version,state,expires_at,authority_version,organization_credential_version,command_id,effect_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8::numeric,'active',$9,$10::numeric,$11::numeric,$12,$13) ON CONFLICT DO NOTHING`, args...)
@@ -419,7 +435,9 @@ func (p *nativePhase) RecoverParticipant(ctx context.Context, w kernel.RecoveryW
 	// Existing exact native effect is positive/ambiguous evidence, never a
 	// reconstructed commit receipt. Only the retained kernel journal proves commit.
 	sql := `SELECT effect_digest FROM scim.users WHERE command_id=$1`
-	if p.bootstrap {
+	if p.bulk != nil {
+		sql = bulkRecoverySelect
+	} else if p.bootstrap {
 		sql = `SELECT effect_digest FROM scim.connections WHERE command_id=$1`
 	} else if p.group() {
 		sql = `SELECT effect_digest FROM scim.groups WHERE command_id=$1`

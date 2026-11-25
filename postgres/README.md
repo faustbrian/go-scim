@@ -34,6 +34,17 @@ SCIM projection; it does not delete the global kernel user. Credential/password
 writes retain the root protocol's explicit unsupported decision. This selected
 Users milestone is not organization provisioning or whole-unit qualification.
 
+`NewGroupBulkService` explicitly selects Group Bulk **admission**. Apply the
+kernel's `CanonicalSCIMBulkRequestMigrationSource` and this module's
+`BulkAdmissionMigrationSource` before calling `Admit`. A bounded input and a
+proved response byte ceiling are required before the request obtains custody.
+The same protected transaction commits one parent, all allocated child IDs,
+their exact dependencies and the planned component order, plus the admission
+audit and outbox effect. A matching retry recovers the same parent and bound.
+An optional key aliases that parent; using it for different input conflicts.
+Admission itself executes no child and is not a Bulk response. Ordinary Users
+and Groups, HTTP routing and discovery still do not enable Bulk.
+
 ## Composition
 
 1. Borrow one **primary** `go-postgres` pool. Apply the existing owners' forward

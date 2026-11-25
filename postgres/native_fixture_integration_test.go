@@ -93,10 +93,7 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 			t.Error("pool cleanup")
 		}
 	})
-	base := kernel.RequestKeyPreparationMigrationSource{Base: kernel.RequestKeyMigrationSource{Base: kernel.MigrationSource{}, Version: 10}, Version: 11}
-	directory := kernel.DirectoryAuthorityMigrationSource{Base: base, Version: 12, GlobalAuthorityID: "scim-deployment", TenantIDs: []identity.TenantID{"tenant-a"}}
-	status := kernel.StatusMigrationSource{Base: directory, Version: 13}
-	installSource(t, ctx, pool, kernel.CanonicalRequestMigrationSource{Base: status, Version: 14})
+	installSource(t, ctx, pool, nativeCanonicalFixtureHistory())
 	installSource(t, ctx, pool, organizationpg.MigrationSource{Version: 20})
 	installSource(t, ctx, pool, organizationpg.CredentialAuthorityMigrationSource{Version: 21})
 	authoritySQL, err := authoritypg.AuthoritySchemaMigration(30)
@@ -180,6 +177,13 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 		t.Fatal("configured native bootstrap did not commit", installed.Outcome, err)
 	}
 	return &nativeFixture{ctx: ctx, pool: pool, service: service, config: c, bearer: bearer, keys: keys, deny: deny}
+}
+
+func nativeCanonicalFixtureHistory() kernel.CanonicalRequestMigrationSource {
+	base := kernel.RequestKeyPreparationMigrationSource{Base: kernel.RequestKeyMigrationSource{Base: kernel.MigrationSource{}, Version: 10}, Version: 11}
+	directory := kernel.DirectoryAuthorityMigrationSource{Base: base, Version: 12, GlobalAuthorityID: "scim-deployment", TenantIDs: []identity.TenantID{"tenant-a"}}
+	status := kernel.StatusMigrationSource{Base: directory, Version: 13}
+	return kernel.CanonicalRequestMigrationSource{Base: status, Version: 14}
 }
 
 func installSource(t *testing.T, ctx context.Context, pool *database.Pool, source migrations.Source) {

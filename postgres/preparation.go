@@ -52,6 +52,9 @@ func (s *Service) requestIntent(canonical []byte, operation string) (identity.Re
 }
 
 func (p *nativePhase) PrepareRequestKey(ctx context.Context, b kernel.RequestKeyPreparationBinding, _ identity.RequestIntent) ([]byte, error) {
+	if p.bulk != nil {
+		return p.prepareBulkRequest(ctx, b)
+	}
 	aad, err := p.preparationAAD(b)
 	if err != nil {
 		return nil, err

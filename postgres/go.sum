@@ -103,6 +103,8 @@ github.com/faustbrian/go-identity/postgres v0.0.0-20261113234404-7672e7aa715a h1
 github.com/faustbrian/go-identity/postgres v0.0.0-20261113234404-7672e7aa715a/go.mod h1:ghox2jHyUazXh448mYO5YMi6GVaH909JlPcxg4xxof8=
 github.com/faustbrian/go-identity/postgres v0.0.0-20261124105449-b80eb17a2361 h1:l5vEUiiuMz9u/3YcuHfHM2SRRlMSmlM+u0mT8jYiX84=
 github.com/faustbrian/go-identity/postgres v0.0.0-20261124105449-b80eb17a2361/go.mod h1:2se0pU/UH8LwiF7kP2TWfBCYFYuJq1TXPb47soXnwRM=
+github.com/faustbrian/go-identity/postgres v0.0.0-20261125073113-b9d9fac2857b h1:DJo2rtYKV1afpfQx4rtqSIw4jwYWycgDdAFvoZwDkm0=
+github.com/faustbrian/go-identity/postgres v0.0.0-20261125073113-b9d9fac2857b/go.mod h1:2se0pU/UH8LwiF7kP2TWfBCYFYuJq1TXPb47soXnwRM=
 github.com/faustbrian/go-identity/reference v0.0.0-20261018031204-02c6195bd789 h1:AcnrkJ3z7oITrIUc6nSJX3OwLitJek2bRJDRu+eE7SQ=
 github.com/faustbrian/go-identity/reference v0.0.0-20261018031204-02c6195bd789/go.mod h1:O/hmm6Lqqb8SknW6SGEhv+EornZU+sR8KVKCXK5h+uY=
 github.com/faustbrian/go-identity/risk v0.0.0-20261028092233-945b17fc88c4 h1:QQNah/VhUsjqLQ7knO236HHpK/x2gC1m6aPUKTOtFr8=
@@ -153,6 +155,8 @@ github.com/faustbrian/go-rate-limit/v2 v2.0.1-0.20261015090634-0ebce3975fe1 h1:w
 github.com/faustbrian/go-rate-limit/v2 v2.0.1-0.20261015090634-0ebce3975fe1/go.mod h1:RqjJW3CAgGnotSWzmYuWdBcU1xeupY5F/IhjDXgthyg=
 github.com/faustbrian/go-scim v0.0.0-20261113195101-e97918aba312 h1:uOLqnM0ycrBMwlilaLpS5trEu4Mhwre0mwHFal8AuUQ=
 github.com/faustbrian/go-scim v0.0.0-20261113195101-e97918aba312/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
+github.com/faustbrian/go-scim v0.0.0-20261125072706-05753a0540da h1:CW+MzA+HnOQr61jGHCiqajUtD59OQQItJITHWr2zv+Y=
+github.com/faustbrian/go-scim v0.0.0-20261125072706-05753a0540da/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1 h1:1GHj2WZhKZihdhlbsU12o7T5kaA9z7IOy/1RQGu3RhA=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1/go.mod h1:X8VgGx/HsaHif3pNbS6A35sYg3SzF1+8A1YIZMd6Lnw=
 github.com/faustbrian/go-service v1.1.2 h1:8gKlxhILZzn1gQg5edVzRomlqLLaa07e2nC9dZ2rxIM=

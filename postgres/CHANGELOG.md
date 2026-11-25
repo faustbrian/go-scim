@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit native Group Bulk admission. Prove the response ceiling before
+  retaining one parent and every ordered child and dependency together. Exact
+  retries recover the original admission. This does not execute children or
+  enable Bulk in HTTP or discovery.
+
 - Carry the exact original role transition across a sealed directory batch
   and reject recovered prefixes that do not match the current sealed owner.
 

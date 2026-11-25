@@ -12,8 +12,9 @@ import (
 // owns no goroutines or shutdown work. It neither exposes Users nor reconciles
 // identities, teams, roles or organization membership.
 type GroupsService struct {
-	native   *Service
-	protocol *scim.GroupsService
+	native         *Service
+	protocol       *scim.GroupsService
+	maximumMembers int
 }
 
 // NewGroupsService selects Groups on an already configured native runtime.
@@ -32,7 +33,7 @@ func NewGroupsService(native *Service, maximumMembers int) (*GroupsService, erro
 	if err != nil {
 		return nil, ErrInvalidConfiguration
 	}
-	return &GroupsService{native: native, protocol: protocol}, nil
+	return &GroupsService{native: native, protocol: protocol, maximumMembers: maximumMembers}, nil
 }
 
 // Execute supports only Groups CRUD/list/search and Group discovery, using the
