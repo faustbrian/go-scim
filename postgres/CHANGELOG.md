@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Retain definitive native Group Bulk child denials without applying the Group.
+  At the configured error threshold, skip remaining admitted children and
+  append one protected audit per skip in the same transaction. Ambiguous
+  outcomes remain retryable; Bulk HTTP and discovery stay disabled.
+
 - Record protected `identity.scim.bulk_admit` events for newly prepared Group
   Bulk admissions. Existing preparations and requests retain their original
   event and retry behavior without re-emitting it.

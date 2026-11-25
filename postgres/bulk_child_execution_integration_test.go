@@ -18,7 +18,12 @@ const dependentGroupBulkFixture = `{"schemas":["urn:ietf:params:scim:api:message
 
 func bulkChildExecutionFixture(t *testing.T) (*nativeFixture, *GroupBulkService) {
 	t.Helper()
-	f, service := bulkAdmissionFixture(t, scim.DefaultBulkResponsePolicy())
+	return bulkChildExecutionFixtureWithResponse(t, scim.DefaultBulkResponsePolicy())
+}
+
+func bulkChildExecutionFixtureWithResponse(t *testing.T, response scim.BulkResponsePolicy) (*nativeFixture, *GroupBulkService) {
+	t.Helper()
+	f, service := bulkAdmissionFixture(t, response)
 	history, err := (BulkChildExecutionMigrationSource{
 		Base: BulkAdmissionMigrationSource{
 			Base: GroupsMigrationSource{

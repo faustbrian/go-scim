@@ -58,8 +58,14 @@ authority to remain live; retry does not renew it. A create's projection,
 original kernel journal, outbox, protected `identity.scim.bulk_apply_child`
 audit and result checkpoint commit together. Replay returns the original 201
 identity/version to a currently authorized caller, even if the projection
-later changes. This is a child result, not a terminal Bulk response; other
-child kinds, cyclic execution, and cutoff/reconciliation are not enabled.
+later changes. A definitive native create denial records the original result
+and counts once, without a Group projection or success outbox event. At a
+positive `failOnErrors` threshold, the failure transaction also skips every
+remaining admitted child and appends one protected audit per skip. A skipped
+child has no operation status, resource identity or version. Unknown outcomes
+do not count as failures; retry the same request and index to recover the
+checkpoint when it is known. These results are not a terminal Bulk response;
+other child kinds, cyclic execution and historical reconciliation remain open.
 
 ## Composition
 

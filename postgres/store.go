@@ -206,6 +206,9 @@ func (b *protocolBridge) executeResourceWrite(ctx context.Context, p *nativePhas
 		if err := b.recheckFailureDisclosure(ctx, p); err != nil {
 			return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, err
 		}
+		if p.bulkChild != nil && result.Outcome == identity.CommitOutcomeNotCommitted {
+			p.bulkChild.acknowledgedFailure = true
+		}
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, failure
 	}
 	var conflict identity.ConflictError

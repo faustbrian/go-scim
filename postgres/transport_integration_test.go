@@ -15,8 +15,9 @@ import (
 // drops only the acknowledgement of the actual SCIM domain COMMIT, never its
 // earlier request mapping/reservation commits. Production SQL is unchanged.
 type nativeCommitFault struct {
-	hit         atomic.Bool
-	reservation bool // Drop the actual pending journal COMMIT, before domain Work.
+	hit                 atomic.Bool
+	reservation         bool // Drop the actual pending journal COMMIT, before domain Work.
+	terminalBulkFailure bool // Drop the commit containing the typed Bulk failure checkpoint.
 }
 
 func (f *nativeCommitFault) dial(ctx context.Context, network, address string) (net.Conn, error) {
@@ -39,6 +40,9 @@ func (c *nativeFaultConn) Write(wire []byte) (int, error) {
 	selected = selected || bytes.Contains(wire, []byte("INSERT INTO scim.bulk_requests\n"))
 	if c.fault.reservation {
 		selected = bytes.Contains(wire, []byte("INSERT INTO identity.commands("))
+	}
+	if c.fault.terminalBulkFailure {
+		selected = bytes.Contains(wire, []byte("UPDATE scim.bulk_requests AS parent SET failed_count=failed_count+1"))
 	}
 	if selected {
 		c.mutation.Store(true)

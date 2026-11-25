@@ -9,15 +9,16 @@ import (
 )
 
 type bulkChildExecution struct {
-	parent   identity.CommandID
-	row      bulkChildRow
-	original originalInput
+	parent              identity.CommandID
+	row                 bulkChildRow
+	original            originalInput
+	acknowledgedFailure bool
 }
 
 // ExecuteChild executes or recovers the original Group create at ordinal. The
 // original request and currently authorized connection are required on every
 // call. It advances only an acyclic Group create whose preceding components
-// completed successfully, and cannot start it after the original parent
+// completed and dependencies succeeded, and cannot start it after the original parent
 // authority expires. Other children are not executed by this selection.
 // A returned result is only this child's checkpoint, never a terminal Bulk
 // response. Retry the exact request and ordinal after an uncertain outcome.
@@ -42,22 +43,16 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		return result, err
 	}
 	child := parent.bulk.children[ordinal]
-	if child.Error != nil {
-		return result, child.Error
-	}
-	if !bulkCreatesGroup(child) {
-		return result, scim.NewError(501, "")
-	}
-	if err := s.native.decide(ctx, string(scim.GroupCreate), "", "identity.scim.group"); err != nil {
-		return result, err
-	}
 	rows, err := parent.bulk.childRows()
 	if err != nil {
 		return result, err
 	}
 	selected := rows[ordinal]
-	if selected.Cyclic {
-		return result, scim.NewError(501, "")
+	groupCreate := child.Error == nil && bulkCreatesGroup(child)
+	if groupCreate {
+		if err := s.native.decide(ctx, string(scim.GroupCreate), "", "identity.scim.group"); err != nil {
+			return result, err
+		}
 	}
 	phase := &bulkChildExecution{parent: parent.original.Command, row: selected, original: originalInput{
 		Command: identity.CommandID(selected.Command), ID: selected.Resource, Operation: scim.GroupCreate,
@@ -67,7 +62,18 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 	if err != nil {
 		return result, err
 	}
-	if checkpoint.Status == scim.BulkChildSucceeded {
+	// Cutoff can skip any admitted declaration, including a child whose parsed
+	// operation would be invalid or unsupported. Replay that retained skip, not
+	// a new operation result. Before cutoff the original errors still apply.
+	if checkpoint.Status != scim.BulkChildSkipped {
+		if child.Error != nil {
+			return result, child.Error
+		}
+		if !groupCreate || selected.Cyclic {
+			return result, scim.NewError(501, "")
+		}
+	}
+	if checkpoint.Status == scim.BulkChildSucceeded || checkpoint.Status == scim.BulkChildFailed || checkpoint.Status == scim.BulkChildSkipped {
 		if err := s.native.recheckRead(ctx, &parent.admission); err != nil {
 			return result, err
 		}
@@ -96,6 +102,18 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 	ctx = context.WithValue(ctx, invocationKey{}, &i)
 	response, err := s.groups.Execute(ctx, scim.Request{Operation: scim.GroupCreate, Credential: request.Credential, Body: resolved.Data, ContentType: "application/scim+json"})
 	if err != nil {
+		if phase.acknowledgedFailure {
+			checkpoint, _, readErr := s.native.readBulkChild(ctx, phase)
+			if readErr != nil {
+				return result, readErr
+			}
+			if checkpoint.Status == scim.BulkChildFailed {
+				if readErr := s.native.recheckRead(ctx, &i); readErr != nil {
+					return result, readErr
+				}
+				return checkpoint, nil
+			}
+		}
 		return result, err
 	}
 	if response.Status != 201 || response.ETag != phase.original.Version {
@@ -113,25 +131,25 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 
 // The parent was verified against original custody and the adapter's exact
 // scope. The child predicates bind the immutable graph identity and plan;
-// only current success can bypass the first-ready guard (historical replay).
+// only a retained outcome can bypass the first-ready guard (historical replay).
 // Induction keeps earlier components concluded: a component could not have
-// succeeded before its own immediate predecessor. Check only that component
-// and the explicit dependency IDs, rather than scanning the completed prefix
-// again for every child in a long request.
+// concluded before its immediate predecessor. The preceding component need
+// only be terminal, but explicit dependencies must all have succeeded. Check
+// only those rows instead of repeatedly scanning the completed prefix.
 const bulkChildReady = `NOT parent.cutoff_active AND
  (child.component_order=0 OR (
   EXISTS (SELECT 1 FROM scim.bulk_children AS prior WHERE prior.parent_id=child.parent_id AND prior.component_order=child.component_order-1)
   AND NOT EXISTS (SELECT 1 FROM scim.bulk_children AS prior WHERE prior.parent_id=child.parent_id
-   AND prior.component_order=child.component_order-1 AND prior.status<>'succeeded')))
+   AND prior.component_order=child.component_order-1 AND prior.status NOT IN ('succeeded','failed'))))
  AND NOT EXISTS (SELECT 1 FROM unnest(child.dependency_ids) AS dependency(id)
   WHERE NOT EXISTS (SELECT 1 FROM scim.bulk_children AS predecessor WHERE predecessor.parent_id=child.parent_id
    AND predecessor.command_id=dependency.id AND predecessor.status='succeeded'))`
 
 const bulkChildCheckpointRead = `SELECT child.status, child.result_code, child.result_resource_id, child.result_version,
- (` + bulkChildReady + `)
+ (NOT child.cyclic AND ` + bulkChildReady + `)
 FROM scim.bulk_children child JOIN scim.bulk_requests parent ON parent.parent_id=child.parent_id
 WHERE child.parent_id=$1 AND child.ordinal=$2 AND child.command_id=$3 AND child.request_fingerprint=$4
- AND child.resource_id=$5 AND child.component_order=$6 AND NOT child.cyclic`
+ AND child.resource_id=$5 AND child.component_order=$6`
 
 const bulkChildStart = `UPDATE scim.bulk_children AS child SET status='running'
 FROM scim.bulk_requests AS parent
@@ -160,8 +178,17 @@ func (s *Service) readBulkChild(ctx context.Context, phase *bulkChildExecution) 
 	if status == "succeeded" && code != nil && *code == 201 && resource != nil && *resource == phase.original.ID && version != nil && *version == string(phase.original.Version) {
 		return scim.BulkChildResult{Status: scim.BulkChildSucceeded, Code: 201, ResourceID: *resource, Version: scim.Version(*version)}, false, nil
 	}
+	if status == "failed" && code != nil && resource == nil && version == nil {
+		if result, ok := bulkGroupFailureResult(int(*code)); ok {
+			return result, false, nil
+		}
+	}
 	if status == "admitted" && code == nil && resource == nil && version == nil {
 		return scim.BulkChildResult{Status: scim.BulkChildAdmitted}, ready, nil
+	}
+	if status == "skipped" && !ready && code == nil && resource == nil && version == nil {
+		// The graph schema permits only the fail-on-errors reason for skipped rows.
+		return scim.BulkChildResult{Status: scim.BulkChildSkipped, SkipReason: scim.BulkSkipFailOnErrors}, false, nil
 	}
 	return scim.BulkChildResult{}, false, identity.UnavailableError{}
 }
