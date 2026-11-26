@@ -146,6 +146,20 @@ See the full Go documentation on `Store` and the
 [profile decisions and limits](docs/users-profile.md) before implementing an
 adapter. Do not infer database correctness from protocol tests.
 
+### Managed connection metadata
+
+`ParseConnectionID`, `ParseMappingPath`, `NewMappingSet`, and
+`NewConnectionRecord` validate and detach the administrative data that an
+owning connection store will persist and disclose. The tenant, organization,
+and connection IDs must use the canonical nonzero 128-bit encoding. Mapping
+paths resolve against declared readable User attributes; neither a mapping
+nor its `Writable` flag grants permission. The record carries the selected
+disposition but is not proof that any lifecycle can execute it.
+
+`ConnectionRecord` is separate from the released `Connection` returned by an
+`Authenticator`. It contains neither credential material nor authority
+freshness, and these value constructors enable no management operations.
+
 ## Transport and integration
 
 `Request`/`Response` do not depend on `net/http`. Transport composition owns actual

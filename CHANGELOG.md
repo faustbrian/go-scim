@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add immutable, credential-free managed connection records, canonical IDs,
+  and bounded mapping paths and sets. The released authenticator `Connection`
+  and available connection-management operations are unchanged.
+
 - Add redacted, persistence-neutral Bulk request custody and authorized
   discovery rendering for an explicitly selected executor's effective limits.
   Support an after-authentication protocol rate decision and bounded 429

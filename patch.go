@@ -204,6 +204,10 @@ type patchPath struct {
 }
 
 func parsePatchPath(raw string, ext []Schema, l Limits, core ...Schema) (patchPath, error) {
+	return parseResourcePath(raw, ext, l, true, core...)
+}
+
+func parseResourcePath(raw string, ext []Schema, l Limits, write bool, core ...Schema) (patchPath, error) {
 	if len(raw) > l.PathBytes {
 		return patchPath{}, failure(400, "invalidPath")
 	}
@@ -248,17 +252,19 @@ func parsePatchPath(raw string, ext []Schema, l Limits, core ...Schema) (patchPa
 			}
 		}
 	}
-	path, e := resolveAttributePath(prefix, ext, l, nil, true, core...)
+	path, e := resolveAttributePath(prefix, ext, l, nil, write, core...)
 	if e != nil {
 		return patchPath{}, e
 	}
-	for _, a := range path.parts {
-		if a.Mutability == "readOnly" {
-			return patchPath{}, failure(400, "mutability")
-		}
-		if a.Returned == "never" || a.Mutability == "writeOnly" {
-			_ = DecideCredentialWrite(CredentialWrite{AttributePath: a.Name})
-			return patchPath{}, failure(400, "mutability")
+	if write {
+		for _, a := range path.parts {
+			if a.Mutability == "readOnly" {
+				return patchPath{}, failure(400, "mutability")
+			}
+			if a.Returned == "never" || a.Mutability == "writeOnly" {
+				_ = DecideCredentialWrite(CredentialWrite{AttributePath: a.Name})
+				return patchPath{}, failure(400, "mutability")
+			}
 		}
 	}
 	p := patchPath{path: path}
@@ -274,13 +280,15 @@ func parsePatchPath(raw string, ext []Schema, l Limits, core ...Schema) (patchPa
 		p.selector = f
 		p.selected = true
 		if tail != "" {
-			p.tail, e = resolveAttributePath(tail, ext, l, a.SubAttributes, true, core...)
+			p.tail, e = resolveAttributePath(tail, ext, l, a.SubAttributes, write, core...)
 			if e != nil {
 				return p, e
 			}
-			for _, a := range p.tail.parts {
-				if a.Mutability == "readOnly" || a.Returned == "never" || a.Mutability == "writeOnly" {
-					return p, failure(400, "mutability")
+			if write {
+				for _, a := range p.tail.parts {
+					if a.Mutability == "readOnly" || a.Returned == "never" || a.Mutability == "writeOnly" {
+						return p, failure(400, "mutability")
+					}
 				}
 			}
 		}
