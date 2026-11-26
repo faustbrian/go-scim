@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit admitted conditional Group Replace for issued managed bearers and
+  the exact tenant. Preserve complete replacement, typed member isolation and
+  native atomic CAS; retain one original headerless replay in a separate Group
+  Replace domain without new SQL, migrations or replay ownership. User/Bulk and
+  ordinary Group request-key behavior remain unchanged.
+
 - Add explicit admitted Group Create for issued managed bearers and the exact
   tenant, using the configured native client and existing Group store. Retain
   bounded typed member isolation, native request keys and original replay;

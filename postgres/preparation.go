@@ -380,10 +380,26 @@ func (p *nativePhase) managedUserReplace() bool {
 	return p.service.managed != nil && !p.bootstrap && p.bulkChild == nil && p.intent.Operation == scim.UserReplace
 }
 
-// Keep Replace's canonical selection separate from the published PATCH domain.
-// Both use the existing coordinator's immutable original request and journal;
-// neither exposes an internal selector as a caller-supplied retry key.
+// Only the explicit admitted managed Group Replace entry point selects durable
+// headerless replacement. Ordinary GroupsService and Bulk keep their key policy.
+type managedGroupReplaceSelectionKey struct{}
+
+func (p *nativePhase) managedGroupReplace(ctx context.Context) bool {
+	return p.service.managed != nil && !p.bootstrap && p.bulkChild == nil && p.intent.Operation == scim.GroupReplace && ctx.Value(managedGroupReplaceSelectionKey{}) == p.service
+}
+
+// Keep User and Group Replace selection separate from each other and the
+// published PATCH domain. All retain the existing coordinator's immutable
+// original request and journal, never a caller-supplied retry key.
 func managedUserReplaceKey(intent scim.WriteIntent) (string, error) {
+	return managedReplaceKey(intent, "scim-managed-user-replace-v1\x00")
+}
+
+func managedGroupReplaceKey(intent scim.WriteIntent) (string, error) {
+	return managedReplaceKey(intent, "scim-managed-group-replace-v1\x00")
+}
+
+func managedReplaceKey(intent scim.WriteIntent, domain string) (string, error) {
 	if intent.IdempotencyKey != "" {
 		return "", scim.NewError(400, "invalidValue")
 	}
@@ -392,7 +408,7 @@ func managedUserReplaceKey(intent scim.WriteIntent) (string, error) {
 		return "", identity.UnavailableError{}
 	}
 	h := sha256.New()
-	_, _ = h.Write([]byte("scim-managed-user-replace-v1\x00"))
+	_, _ = h.Write([]byte(domain))
 	_, _ = h.Write(scope)
 	_, _ = h.Write([]byte{0})
 	_, _ = h.Write(intent.CanonicalRequest)

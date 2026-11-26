@@ -109,6 +109,25 @@ references must exist in the exact connection at commit and are never modified
 or traversed. This adds no SQL, migration, mapping/retry owner, HTTP route or
 other Group write. User Create and Group read selections remain unchanged.
 
+`ExecuteManagedAdmittedGroupReplace(ctx, tenant, request, maximumMembers, gate)`
+separately selects only conditional Group Replace for the issued managed bearer
+and exact tenant, rejecting caller request keys. The same trusted member ceiling
+and existing native Groups migration/store apply. Current bearer/operation
+authority, required strong `If-Match` and bounded complete Group/member validation
+precede the required gate's one invocation, before canonical preparation, mapping
+or protected effects. The gate receives only the configured native client and
+tenant, must honor its original context, and must retain no invocation/context
+or start detached work. Root deadlines, redacted denials/retry metadata, reentry
+and final disclosure fences remain controlling.
+Omitted writable fields and members are replaced, not merged. The existing
+coordinator retains one original command for the canonical scoped request in a
+separate Group Replace domain. Equivalent headerless retry returns its original
+Group and ETag without another generation, audit or outbox effect. Changed input
+with a stale ETag cannot replay that original result. Typed User and Group members
+must exist in the exact connection at atomic commit; references are never
+traversed or modified. No SQL, migration, replay owner or HTTP route is added;
+User/Bulk and ordinary Group request-key behavior remain unchanged.
+
 `ExecuteManagedAdmittedCreate` separately selects only User Create with the
 issued managed bearer, exact tenant and required `scim.ProtocolAdmission` gate.
 Existing root request/schema validation and current native bearer/operation
