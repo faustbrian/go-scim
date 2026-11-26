@@ -32,6 +32,15 @@ func (e *Error) StatusCode() int {
 	return e.code
 }
 
+// SCIMType returns the safe optional protocol type also emitted by MarshalJSON.
+// It returns an empty string for a nil or untyped error.
+func (e *Error) SCIMType() string {
+	if e == nil {
+		return ""
+	}
+	return e.kind
+}
+
 // Format redacts every diagnostic verb, including %#v.
 func (e *Error) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, e.Error()) }
 

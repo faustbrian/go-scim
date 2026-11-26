@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Expose the normalized, optional `scimType` from a protocol error without
+  changing its JSON or exposing private diagnostics.
+
 - Resolve request-local Bulk targets and schema-declared references using IDs
   from the native admission, including forward and cyclic references. Ordinary
   strings and the original request fingerprint input are unchanged.
