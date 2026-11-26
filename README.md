@@ -169,6 +169,22 @@ no detached work. This selection adds no credential verifier, quota owner,
 storage, HTTP route or public HTTP `Idempotency-Key` extension. Ordinary execution
 and other operation selections are unchanged.
 
+`GroupsService.ExecuteAdmittedPatch(ctx, request, gate)` separately selects
+only `GroupPatch`. Current bearer/operation authority and the existing bounded
+target, required strong `If-Match`, Group PatchOp/schema and query checks precede
+its once-per-attempt gate, including retries. No command allocation, mapping or
+GroupStore admission precedes an allowed, still-current result. The complete
+ordered patch, canonical input, Store-owned original command/replay, no-op
+metadata, exact-connection typed member integrity and atomic conditional write
+authority remain unchanged; admission grants none of that authority. Stateful
+member validation still belongs to the existing protocol and Store boundaries.
+Original deadlines, redacted denials, descendant-context reentry and late-result
+disclosure fences match admitted Group Replace, including invalid calls to this
+entry point from the gate. The gate must honor its context, retain no invocation
+state and start no detached work. This selects no other operation, credential
+verifier, quota owner, storage, HTTP route or public HTTP `Idempotency-Key`
+extension. Ordinary execution and sibling selections are unchanged.
+
 `UsersService.ExecuteAdmittedCreate(ctx, request, gate)` separately selects
 `UserCreate` with a required synchronous trusted gate. Existing bounded JSON,
 schema, target and query validation, actual bearer authentication and operation

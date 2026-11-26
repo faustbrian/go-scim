@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit conditional GroupPatch admission after current bearer/operation
+  authority and existing bounded target, strong If-Match and Group PatchOp/schema
+  preflight, before command, mapping or Store effects. Preserve the complete
+  ordered patch, canonical Store command/replay, no-op metadata, exact-connection
+  typed membership, atomic conditional writes and original authority/disclosure
+  fences; ordinary execution and sibling selections are unchanged.
+
 - Add explicit conditional GroupReplace admission after current bearer/operation
   authority and bounded target, strong If-Match, replacement/schema/member
   preflight, before command, mapping or Store effects. Preserve complete
