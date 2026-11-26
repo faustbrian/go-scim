@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Bind Bulk execution and discovery to the same native executor and an
+  authenticated, once-per-attempt transport admission decision.
+
 - Retain unsupported Bulk methods without a resource operation or Location.
   Preserve symbolic dependencies, cutoff, and replay.
 

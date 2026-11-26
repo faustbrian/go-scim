@@ -102,6 +102,15 @@ symbolic target declaration still waits for its original predecessor:
 confirmed failure retains `424`, otherwise a ready child retains
 `400 invalidValue` unless cutoff skips it.
 
+For transport integration, use the same `BulkService` as the owner of
+`ExecuteBulkProtocol` and `ReadBulkServiceProviderConfig`. Each requires a
+bounded admission gate, called once after native authentication and policy
+and before either execution/replay or discovery output. The gate receives
+the configured client and resource tenant, never the bearer. Its bounded
+rate denial or outage returns no successful response. The consumer uses
+`BulkPolicies` to apply the executor's actual transport limits. The
+existing native entry points do not install transport routes or quotas.
+
 Install the expansion from `BulkSnapshotValidationMigrationSource` before
 using this profile with snapshot-dependent validation. A PATCH can retain
 `noTarget` or `mutability` from its original prepared resource, without

@@ -14,7 +14,7 @@ require (
 	github.com/faustbrian/go-organization v0.0.0-20261122135635-30af6abd1547
 	github.com/faustbrian/go-organization/postgres v0.0.0-20261125064514-0db635e0981d
 	github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7
-	github.com/faustbrian/go-scim v0.0.0-20261126094455-604b6a522ead
+	github.com/faustbrian/go-scim v0.0.0-20261126100726-3ed06a762b19
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1
 	github.com/faustbrian/go-transactional-outbox/postgres/identity v0.0.0-20261026011803-e03d6969b19b
 	github.com/faustbrian/go-transactional-outbox/v2 v2.1.1-0.20261022172917-6ed5e0861542

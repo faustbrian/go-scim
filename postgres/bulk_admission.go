@@ -124,7 +124,7 @@ func (s *GroupBulkService) Admit(ctx context.Context, request BulkAdmissionReque
 }
 
 func (s *GroupBulkService) admitGraph(ctx context.Context, request BulkAdmissionRequest, ordinal *int) (*nativePhase, scim.BulkPlan, error) {
-	prepared, err := s.prepareBulkGraph(ctx, request, ordinal)
+	prepared, err := s.prepareBulkGraph(ctx, request, ordinal, nil)
 	if err != nil {
 		return nil, scim.BulkPlan{}, err
 	}
@@ -160,7 +160,7 @@ type preparedBulkGraph struct {
 	response scim.BulkResponsePlan
 }
 
-func (s *GroupBulkService) prepareBulkGraph(ctx context.Context, request BulkAdmissionRequest, ordinal *int) (preparedBulkGraph, error) {
+func (s *GroupBulkService) prepareBulkGraph(ctx context.Context, request BulkAdmissionRequest, ordinal *int, admit scim.ProtocolAdmission) (preparedBulkGraph, error) {
 	c := s.native.config()
 	i := new(invocation)
 	ctx = context.WithValue(ctx, invocationKey{}, i)
@@ -171,6 +171,17 @@ func (s *GroupBulkService) prepareBulkGraph(ctx context.Context, request BulkAdm
 	operation := string(scim.Bulk)
 	if err := s.native.decide(ctx, operation, c.Scope.ConnectionID, "identity.scim.bulk"); err != nil {
 		return preparedBulkGraph{}, err
+	}
+	if admit != nil {
+		gateCtx, cancel := context.WithDeadline(ctx, i.connection.AuthorityValidUntil)
+		denial := s.native.admitBulkProtocol(gateCtx, admit)
+		cancel()
+		if !liveConnection(ctx, i.connection) {
+			return preparedBulkGraph{}, scim.NewError(503, "")
+		}
+		if denial != nil {
+			return preparedBulkGraph{}, denial
+		}
 	}
 	plan, err := scim.ParseBulk(request.Body, nil, s.request, c.Limits)
 	if err != nil {

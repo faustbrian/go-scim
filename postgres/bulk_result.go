@@ -30,7 +30,7 @@ func (s *GroupBulkService) ReadResult(ctx context.Context, request BulkAdmission
 			}
 		}
 	}()
-	prepared, err := s.prepareBulkGraph(ctx, request, nil)
+	prepared, err := s.prepareBulkGraph(ctx, request, nil, nil)
 	if err != nil {
 		return nil, err
 	}

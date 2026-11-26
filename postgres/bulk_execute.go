@@ -13,7 +13,22 @@ import (
 // atomically. It returns only a currently authorized, complete BulkResponse.
 // On interruption or an unknown outcome it returns no response bytes; retry
 // the identical request and optional key to recover the original checkpoints.
-func (s *BulkService) ExecuteBulk(ctx context.Context, request BulkAdmissionRequest) (wire []byte, err error) {
+func (s *BulkService) ExecuteBulk(ctx context.Context, request BulkAdmissionRequest) ([]byte, error) {
+	return s.executeBulk(ctx, request, nil)
+}
+
+// ExecuteBulkProtocol runs the same native executor with an outer transport
+// admission. The gate is required and called once after current Bulk
+// authentication and authorization, before planning, admission or replay.
+// It does not run for individual children. Denial returns no BulkResponse.
+func (s *BulkService) ExecuteBulkProtocol(ctx context.Context, request scim.BulkRequest, admit scim.ProtocolAdmission) ([]byte, error) {
+	if admit == nil {
+		return nil, scim.NewError(503, "")
+	}
+	return s.executeBulk(ctx, BulkAdmissionRequest(request), admit)
+}
+
+func (s *BulkService) executeBulk(ctx context.Context, request BulkAdmissionRequest, admit scim.ProtocolAdmission) (wire []byte, err error) {
 	graph := s.executor()
 	if graph == nil || graph.native == nil || graph.groups == nil || ctx == nil {
 		return nil, scim.NewError(503, "")
@@ -28,7 +43,7 @@ func (s *BulkService) ExecuteBulk(ctx context.Context, request BulkAdmissionRequ
 		}
 	}()
 
-	prepared, err := graph.prepareBulkGraph(ctx, request, nil)
+	prepared, err := graph.prepareBulkGraph(ctx, request, nil, admit)
 	if err != nil {
 		return nil, err
 	}

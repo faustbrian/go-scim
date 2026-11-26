@@ -135,8 +135,8 @@ github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7 h1:yYXsPB
 github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7/go.mod h1:1BN8d6pyyD063irAOXCGiU6Pr1kCLILnetE1UA6hoow=
 github.com/faustbrian/go-rate-limit/v2 v2.0.1-0.20261015090634-0ebce3975fe1 h1:wClLzW8mUPmV7ilNALEIP0wJZ8LFWjb0nmGKh7LmDGw=
 github.com/faustbrian/go-rate-limit/v2 v2.0.1-0.20261015090634-0ebce3975fe1/go.mod h1:RqjJW3CAgGnotSWzmYuWdBcU1xeupY5F/IhjDXgthyg=
-github.com/faustbrian/go-scim v0.0.0-20261126094455-604b6a522ead h1:qYNyXIwx24UDcZB/XKxyWI7lyJoM7oW1xK4KjsAG4SA=
-github.com/faustbrian/go-scim v0.0.0-20261126094455-604b6a522ead/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
+github.com/faustbrian/go-scim v0.0.0-20261126100726-3ed06a762b19 h1:ajuJKIZ7kEQH/BGha4ZRDqTgfIoPGhWupl052MJtaaU=
+github.com/faustbrian/go-scim v0.0.0-20261126100726-3ed06a762b19/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1 h1:1GHj2WZhKZihdhlbsU12o7T5kaA9z7IOy/1RQGu3RhA=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1/go.mod h1:X8VgGx/HsaHif3pNbS6A35sYg3SzF1+8A1YIZMd6Lnw=
 github.com/faustbrian/go-service v1.1.2 h1:8gKlxhILZzn1gQg5edVzRomlqLLaa07e2nC9dZ2rxIM=
