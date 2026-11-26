@@ -31,7 +31,7 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 	}
 	p := &nativePhase{service: b.service, admission: *i, intent: intent}
 	if i.bulkChild != nil {
-		if !b.groups && (intent.Operation != scim.UserCreate || i.bulkChild.row.Cyclic) ||
+		if !b.groups && i.bulkChild.row.Cyclic ||
 			intent.Operation != i.bulkChild.original.Operation || intent.IdempotencyKey != "" ||
 			intent.IfMatch != i.bulkChild.ifMatch || !nativeCreate(intent.Operation) && intent.ResourceID != i.bulkChild.original.ID {
 			return scim.PreparedWrite{}, identity.ForbiddenError{}

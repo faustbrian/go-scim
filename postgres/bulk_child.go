@@ -51,7 +51,7 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		return result, err
 	}
 	selected := rows[ordinal]
-	operation, target := parent.bulk.selectChild(ordinal, parent.bulk.groupCreateTargets())
+	operation, target := parent.bulk.selectChild(ordinal, parent.bulk.createTargets())
 	if operation != "" {
 		if err := s.native.decide(ctx, string(operation), target, bulkChildAuthorizationType(operation)); err != nil {
 			return result, err
@@ -128,7 +128,7 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 	i.bulkChild = phase
 	ctx = context.WithValue(ctx, invocationKey{}, &i)
 	execute := s.groups.Execute
-	if operation == scim.UserCreate {
+	if !groupOperation(operation) {
 		execute = s.native.protocol.Execute
 	}
 	response, err := execute(ctx, scim.Request{Operation: operation, ResourceID: target, IfMatch: phase.ifMatch, Credential: request.Credential, Body: resolved.Data, ContentType: "application/scim+json"})
@@ -139,16 +139,25 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 			p := i.phase
 			switch protocol.StatusCode() {
 			case 404:
-				if p != nil && p.bulkDenialMatches(kernel.FeatureFailureGroupMissing) {
-					code = kernel.FeatureFailureGroupMissing
+				if p != nil {
+					missing := kernel.FeatureFailureGroupMissing
+					if !p.group() {
+						missing = kernel.FeatureFailureUserMissing
+					}
+					if p.bulkDenialMatches(missing) {
+						code = missing
+					}
 				}
 			case 412:
 				if p != nil && p.hasStaleBulkPrecondition() {
 					code = kernel.FeatureFailurePrecondition
+					if !p.group() {
+						code = kernel.FeatureFailureUserVersionMismatch
+					}
 				}
 			case 428:
 				if p == nil && phase.ifMatch == "" {
-					// Ordinary Group validation rejected the missing precondition
+					// Ordinary validation rejected the missing precondition
 					// before Prepare. The admitted child already binds the full
 					// request and original authority; do not read the projection.
 					p = &nativePhase{service: s.native, bulkChild: phase, admission: i, original: phase.original, intent: scim.WriteIntent{
@@ -161,6 +170,9 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 					}
 					p.coordinator, p.registry = coordinator, registry
 					code = kernel.FeatureFailureGroupVersionRequired
+					if !p.group() {
+						code = kernel.FeatureFailureUserVersionRequired
+					}
 				}
 			}
 			if code != 0 {
@@ -197,33 +209,39 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 }
 
 func (p *nativePhase) hasStaleBulkPrecondition() bool {
-	return p.bulkChild != nil && p.group() && nativeMutation(p.intent.Operation) &&
+	return p.bulkChild != nil && nativeMutation(p.intent.Operation) &&
 		p.original.Current != nil && p.intent.IfMatch != "" && p.original.Current.Version != p.intent.IfMatch
 }
 
 func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
 	if code == kernel.FeatureFailureSCIMBulkDependency {
-		return p.bulkChild != nil && p.group() && !p.bulkChild.row.Cyclic &&
+		return p.bulkChild != nil && (nativeMutation(p.intent.Operation) || p.intent.Operation == scim.GroupCreate) && !p.bulkChild.row.Cyclic &&
 			len(p.bulkChild.row.Dependencies) > 0 && p.original == p.bulkChild.original && p.intent.Operation == p.original.Operation
 	}
-	if p.bulkChild == nil || !p.group() || !nativeMutation(p.intent.Operation) || p.intent.ResourceID != p.original.ID || p.original.Operation != p.intent.Operation {
+	if p.bulkChild == nil || p.bulkChild.row.Cyclic || !nativeMutation(p.intent.Operation) || p.intent.ResourceID != p.original.ID || p.original.Operation != p.intent.Operation {
 		return false
 	}
 	switch code {
 	case kernel.FeatureFailureGroupMissing:
-		return p.intent.IfMatch != "" && p.original.Schema == 3 && p.original.Current == nil && p.original.Generation == 0
+		return p.group() && p.intent.IfMatch != "" && p.original.Schema == 3 && p.original.Current == nil && p.original.Generation == 0
 	case kernel.FeatureFailureGroupVersionRequired:
-		return p.intent.IfMatch == "" && p.original.Schema == 0 && p.original.Current == nil && p.original.Generation == 0
+		return p.group() && p.intent.IfMatch == "" && p.original.Schema == 0 && p.original.Current == nil && p.original.Generation == 0
+	case kernel.FeatureFailureUserMissing:
+		return !p.group() && p.intent.IfMatch != "" && p.original.Schema == 2 && p.original.Current == nil && p.original.Generation == 0
+	case kernel.FeatureFailureUserVersionRequired:
+		return !p.group() && p.intent.IfMatch == "" && p.original.Schema == 0 && p.original.Current == nil && p.original.Generation == 0
+	case kernel.FeatureFailureUserVersionMismatch:
+		return !p.group() && p.original.Schema == 2 && p.hasStaleBulkPrecondition()
 	default:
 		return false
 	}
 }
 
 func (p *nativePhase) recordBulkProtocolDenial(ctx context.Context, code kernel.FeatureFailureCode) error {
-	// The Group protocol has already authorized, parsed and rejected this exact
+	// The resource protocol has already authorized, parsed and rejected this exact
 	// request. The actual denial is derived again from the sealed original in
 	// Work. No transport error value or fresh projection can choose the outcome.
-	if err := p.service.decide(ctx, string(p.intent.Operation), p.intent.ResourceID, "identity.scim.group"); err != nil {
+	if err := p.service.decide(ctx, string(p.intent.Operation), p.intent.ResourceID, bulkChildAuthorizationType(p.intent.Operation)); err != nil {
 		return err
 	}
 	if code != kernel.FeatureFailurePrecondition {
@@ -244,10 +262,10 @@ func (p *nativePhase) recordBulkProtocolDenial(ctx context.Context, code kernel.
 	return nil
 }
 
-func (p *bulkAdmissionPhase) groupCreateTargets() map[string]string {
+func (p *bulkAdmissionPhase) createTargets() map[string]string {
 	targets := make(map[string]string)
 	for i, child := range p.children {
-		if child.Error == nil && bulkCreatesGroup(child) && child.BulkID != "" {
+		if child.Error == nil && bulkCreatesResource(child) && child.BulkID != "" {
 			targets[child.BulkID] = p.allocation[i].Resource
 		}
 	}
@@ -262,7 +280,8 @@ func (p *bulkAdmissionPhase) selectChild(ordinal int, targets map[string]string)
 	if child.Target.ResourceType == "User" && child.Method == "POST" {
 		return scim.UserCreate, ""
 	}
-	if child.Target.ResourceType != "Group" {
+	user := child.Target.ResourceType == "User"
+	if child.Target.ResourceType != "Group" && !user {
 		return "", ""
 	}
 	if child.Method == "POST" {
@@ -277,10 +296,19 @@ func (p *bulkAdmissionPhase) selectChild(ordinal int, targets map[string]string)
 	}
 	switch child.Method {
 	case "PUT":
+		if user {
+			return scim.UserReplace, target
+		}
 		return scim.GroupReplace, target
 	case "PATCH":
+		if user {
+			return scim.UserPatch, target
+		}
 		return scim.GroupPatch, target
 	case "DELETE":
+		if user {
+			return scim.UserDelete, target
+		}
 		return scim.GroupDelete, target
 	default:
 		return "", ""
@@ -298,14 +326,14 @@ func newBulkChildExecution(parent originalInput, row bulkChildRow, op scim.Opera
 }
 
 func bulkChildAuthorizationType(operation scim.Operation) string {
-	if operation == scim.UserCreate {
+	if !groupOperation(operation) {
 		return "identity.scim.user"
 	}
 	return "identity.scim.group"
 }
 
 func (s *Service) checkBulkChildDisclosure(ctx context.Context, operation scim.Operation, result scim.BulkChildResult) error {
-	if operation == scim.UserCreate && result.Status == scim.BulkChildSucceeded {
+	if !groupOperation(operation) && result.Status == scim.BulkChildSucceeded {
 		user, err := s.directory.Get(ctx, identity.GetUserQuery{TenantID: s.config().Scope.TenantID, UserID: identity.UserID(result.ResourceID)})
 		if err != nil || user.Status != identity.StatusActive {
 			return identity.ForbiddenError{}
@@ -397,16 +425,18 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 
 func (p *bulkChildExecution) failureResult(code int) (scim.BulkChildResult, bool) {
 	if code == 424 && (p.row.Cyclic && p.original.Operation == scim.GroupCreate ||
-		!p.row.Cyclic && len(p.row.Dependencies) > 0 && groupOperation(p.original.Operation)) {
+		!p.row.Cyclic && len(p.row.Dependencies) > 0 && (nativeMutation(p.original.Operation) || p.original.Operation == scim.GroupCreate)) {
 		return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true
 	}
-	if p.original.Operation == scim.UserCreate && !p.row.Cyclic && code == 409 {
-		// The native User-create callback accepts only the kernel's uniqueness
+	if !p.row.Cyclic && code == 409 && (p.original.Operation == scim.UserCreate || p.original.Operation == scim.UserReplace || p.original.Operation == scim.UserPatch) {
+		// The native User callback accepts only the kernel's uniqueness
 		// denial for this checkpoint code; generic conflicts are not equivalent.
 		return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code, SCIMType: "uniqueness"}, true
 	}
-	if !p.row.Cyclic && code == 503 && (p.original.Operation == scim.UserCreate ||
-		groupOperation(p.original.Operation) && (nativeCreate(p.original.Operation) || nativeMutation(p.original.Operation))) {
+	if !p.row.Cyclic && code == 503 && (nativeCreate(p.original.Operation) || nativeMutation(p.original.Operation)) {
+		return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true
+	}
+	if !p.row.Cyclic && !groupOperation(p.original.Operation) && nativeMutation(p.original.Operation) && (code == 404 || code == 412 || code == 428) {
 		return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true
 	}
 	return bulkGroupFailureResult(p.original.Operation, code)
@@ -417,7 +447,7 @@ func (p *bulkChildExecution) successfulResult(code int64, version *string) (scim
 	if p.original.ID == "" {
 		return result, false
 	}
-	if p.original.Operation == scim.GroupDelete {
+	if nativeDelete(p.original.Operation) {
 		return result, code == 204 && version == nil
 	}
 	if version == nil {
@@ -427,9 +457,9 @@ func (p *bulkChildExecution) successfulResult(code int64, version *string) (scim
 	switch p.original.Operation {
 	case scim.GroupCreate, scim.UserCreate:
 		return result, code == 201 && result.Version == p.original.Version
-	case scim.GroupReplace:
+	case scim.GroupReplace, scim.UserReplace:
 		return result, code == 200 && result.Version == p.original.Version
-	case scim.GroupPatch:
+	case scim.GroupPatch, scim.UserPatch:
 		return result, code == 200 && (result.Version == p.original.Version || p.ifMatch != "" && result.Version == p.ifMatch)
 	default:
 		return result, false
@@ -457,19 +487,23 @@ func (p *nativePhase) applyBulkGroupChild(ctx context.Context, w kernel.Work) (i
 	}
 	if p.intent.Operation == scim.GroupCreate {
 		return p.finishBulkCreate(ctx, w, receipt)
-	} else {
-		code, version := 204, ""
-		if p.intent.Operation != scim.GroupDelete {
-			code, version = 200, string(p.resource.Version)
-			if p.resource.ID != phase.original.ID {
-				return identity.FeatureReceipt{}, identity.UnavailableError{}
-			}
-			if _, ok := phase.successfulResult(int64(code), &version); !ok {
-				return identity.FeatureReceipt{}, identity.UnavailableError{}
-			}
-		}
-		count, err = w.Exec(ctx, bulkGroupMutationSucceed, append(phase.args(), code, phase.original.ID, version)...)
 	}
+	return p.finishBulkMutation(ctx, w, receipt)
+}
+
+func (p *nativePhase) finishBulkMutation(ctx context.Context, w kernel.Work, receipt identity.FeatureReceipt) (identity.FeatureReceipt, error) {
+	phase := p.bulkChild
+	code, version := 204, ""
+	if !nativeDelete(p.intent.Operation) {
+		code, version = 200, string(p.resource.Version)
+		if p.resource.ID != phase.original.ID {
+			return identity.FeatureReceipt{}, identity.UnavailableError{}
+		}
+		if _, ok := phase.successfulResult(int64(code), &version); !ok {
+			return identity.FeatureReceipt{}, identity.UnavailableError{}
+		}
+	}
+	count, err := w.Exec(ctx, bulkGroupMutationSucceed, append(phase.args(), code, phase.original.ID, version)...)
 	if err != nil || count != 1 {
 		return identity.FeatureReceipt{}, identity.UnavailableError{}
 	}

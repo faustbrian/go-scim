@@ -52,15 +52,21 @@ and Groups, HTTP routing and discovery still do not enable Bulk.
 
 `NewBulkService` explicitly selects mixed native Bulk on the same configured
 connection. Use the same migrations as for Group Bulk and the existing native
-Users migration. It accepts acyclic `POST /Users` alongside the supported
-Group operations. A Group can refer forward to a User by typed `bulkId`; it
-cannot apply until the original User command commits. User mutations and
-cycles containing Users remain unsupported. The Group-only constructor does
+Users migration. It accepts acyclic User creates, conditional replace/PATCH,
+and conditional delete alongside the supported Group operations. Apply
+`BulkGroupMutationMigrationSource` for either resource type before executing
+mutations; the historical column name remains unchanged. A child referring
+to a User by typed `bulkId` cannot run until the original User command commits.
+Cycles containing Users remain unsupported. The Group-only constructor does
 not accept a User operation. Select mixed Bulk only when every executor for
 that connection can resume mixed requests.
 
-The User record, projection, child checkpoint, protected audit and lifecycle
-effect commit together. A duplicate username retains the original `409` with
+The applicable User record update, projection, child checkpoint, protected
+audit and lifecycle effect commit together. A no-op PATCH keeps its original
+ETag. DELETE tombstones only the connection-scoped SCIM projection, not the
+identity record. An exact retry returns its original outcome despite later
+projection changes. Missing targets and missing or stale preconditions retain
+their original `404`, `428`, or `412`. A duplicate username retains `409` with
 `scimType=uniqueness`. If a started acyclic child rolls back and its abort is
 confirmed, the original child retains `503` and no successful projection or
 lifecycle effect. A caller's unknown outcome gives no evidence of a child

@@ -51,7 +51,7 @@ func (s *GroupBulkService) ReadResult(ctx context.Context, request BulkAdmission
 		op     scim.Operation
 		target string
 	}
-	targets := p.bulk.groupCreateTargets()
+	targets := p.bulk.createTargets()
 	authorized := make(map[disclosure]struct{})
 	for ordinal, result := range results {
 		if result.Status == scim.BulkChildSkipped {
@@ -108,7 +108,7 @@ func (p *nativePhase) readBulkTerminalCheckpoints(ctx context.Context) ([]scim.B
 	results := make([]scim.BulkChildResult, 0, len(expected))
 	var failed, retainedFailures int
 	var cutoff, incomplete bool
-	targets := p.bulk.groupCreateTargets()
+	targets := p.bulk.createTargets()
 	for rows.Next() {
 		index := len(results)
 		if index == len(expected) {

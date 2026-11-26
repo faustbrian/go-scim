@@ -61,22 +61,26 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 		}
 		status = 409
 	case kernel.FeatureFailureUniqueness:
-		if p.intent.Operation != scim.UserCreate || phase.row.Cyclic {
+		if groupOperation(p.intent.Operation) || nativeDelete(p.intent.Operation) || phase.row.Cyclic {
 			return identity.ForbiddenError{}
 		}
 		status = 409
 	case kernel.FeatureFailurePrecondition:
-		if !nativeMutation(p.intent.Operation) || !p.group() {
+		if !nativeMutation(p.intent.Operation) {
 			return identity.ForbiddenError{}
 		}
 		status = 412
-	case kernel.FeatureFailureGroupMissing, kernel.FeatureFailureGroupVersionRequired:
+	case kernel.FeatureFailureGroupMissing, kernel.FeatureFailureGroupVersionRequired,
+		kernel.FeatureFailureUserMissing, kernel.FeatureFailureUserVersionRequired, kernel.FeatureFailureUserVersionMismatch:
 		if p.denialOnly != failure || !p.bulkDenialMatches(failure) {
 			return identity.ForbiddenError{}
 		}
 		status = 404
-		if failure == kernel.FeatureFailureGroupVersionRequired {
+		if failure == kernel.FeatureFailureGroupVersionRequired || failure == kernel.FeatureFailureUserVersionRequired {
 			status = 428
+		}
+		if failure == kernel.FeatureFailureUserVersionMismatch {
+			status = 412
 		}
 	default:
 		return identity.UnavailableError{}
@@ -186,7 +190,7 @@ func (p *nativePhase) checkBulkChildReconciliationScope(w kernel.Work) error {
 }
 
 func (p *nativePhase) checkAcyclicBulkChildScope(w kernel.Work) error {
-	if p == nil || p.service == nil || p.bulk != nil || p.bootstrap || p.bulkChild == nil || !p.group() && p.intent.Operation != scim.UserCreate ||
+	if p == nil || p.service == nil || p.bulk != nil || p.bootstrap || p.bulkChild == nil ||
 		!nativeCreate(p.intent.Operation) && !nativeMutation(p.intent.Operation) {
 		return identity.ForbiddenError{}
 	}

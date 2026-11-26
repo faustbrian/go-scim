@@ -18,12 +18,12 @@ import (
 // Group projection. It does not enable discovery or an HTTP route.
 // Its pool and authority remain borrowed from the ordinary Group service.
 type GroupBulkService struct {
-	native          *Service
-	groups          *scim.GroupsService
-	request         scim.BulkPolicy
-	response        scim.BulkResponsePolicy
-	profile         [32]byte
-	allowUserCreate bool
+	native     *Service
+	groups     *scim.GroupsService
+	request    scim.BulkPolicy
+	response   scim.BulkResponsePolicy
+	profile    [32]byte
+	allowUsers bool
 }
 
 // NewGroupBulkService performs no I/O. Install BulkAdmissionMigrationSource
@@ -167,7 +167,7 @@ func (s *GroupBulkService) prepareBulkGraph(ctx context.Context, request BulkAdm
 		return preparedBulkGraph{}, scim.NewError(400, "invalidValue")
 	}
 	for _, child := range children {
-		if child.Target.ResourceType == "User" && (!s.allowUserCreate || child.Method != "POST") {
+		if child.Target.ResourceType == "User" && !s.allowUsers {
 			return preparedBulkGraph{}, scim.NewError(501, "")
 		}
 	}

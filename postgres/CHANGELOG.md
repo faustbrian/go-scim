@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Execute conditional User PUT, PATCH, and DELETE in opt-in native Bulk.
+  Retain original result versions and confirmed failures on replay, and let
+  User DELETE remove only the connection-scoped SCIM projection.
+
 - Add opt-in native mixed Bulk for acyclic User creates and supported Group
   operations, with typed forward references and replay from original commands.
 - Settle a started acyclic child as a retained 503 after the kernel confirms

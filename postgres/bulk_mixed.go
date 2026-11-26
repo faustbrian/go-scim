@@ -8,21 +8,21 @@ import (
 )
 
 // BulkService selects native Bulk for Group operations and acyclic User
-// creates on one configured connection. It does not expose an HTTP endpoint.
+// writes on one configured connection. It does not expose an HTTP endpoint.
 // Its zero value does not execute requests.
 type BulkService struct {
 	graph *GroupBulkService
 }
 
 // NewBulkService borrows both protocols from the same configured Groups
-// service. Install the Users, Groups and Bulk child execution migrations
-// before using it. Cyclic User operations and User mutations are not selected.
+// service. Install the Users, Groups, Bulk child execution and Bulk mutation
+// migrations before use. Cycles containing Users are not selected.
 func NewBulkService(groups *GroupsService, request scim.BulkPolicy, response scim.BulkResponsePolicy) (*BulkService, error) {
 	graph, err := NewGroupBulkService(groups, request, response)
 	if err != nil {
 		return nil, err
 	}
-	graph.allowUserCreate = true
+	graph.allowUsers = true
 	return &BulkService{graph: graph}, nil
 }
 

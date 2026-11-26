@@ -76,7 +76,7 @@ func (p *nativePhase) bulkMutationInputAAD(parent originalInput) (envelope.Conte
 	if p == nil || p.service == nil || p.service.config == nil || p.service.crypto == nil || p.bulkChild == nil || p.bulk != nil || p.bootstrap {
 		return envelope.Context{}, identity.UnavailableError{}
 	}
-	if p.intent.Operation != scim.GroupReplace && p.intent.Operation != scim.GroupPatch && p.intent.Operation != scim.GroupDelete {
+	if !nativeMutation(p.intent.Operation) {
 		return envelope.Context{}, identity.UnavailableError{}
 	}
 	c, child := p.service.config(), p.bulkChild
@@ -119,8 +119,12 @@ func (p *nativePhase) bulkMutationInputAAD(parent originalInput) (envelope.Conte
 		return envelope.Context{}, identity.UnavailableError{}
 	}
 	digest := sha256.Sum256(frame)
+	profile := "scim-bulk-group-mutation-original-v1"
+	if !p.group() {
+		profile = "scim-bulk-user-mutation-original-v1"
+	}
 	aad, err := envelope.NewContext(map[string]string{
-		"profile": "scim-bulk-group-mutation-original-v1",
+		"profile": profile,
 		"binding": base64.RawURLEncoding.EncodeToString(digest[:]),
 	})
 	if err != nil {
@@ -144,7 +148,11 @@ func (p *nativePhase) validateBulkMutationInput(input originalInput, parent orig
 	if _, err := p.service.restoreAdmission(input.Admission, input.At); err != nil {
 		return identity.UnavailableError{}
 	}
-	if err := p.validateGroupOriginal(input); err != nil {
+	validate := p.validateGroupOriginal
+	if !p.group() {
+		validate = p.validateUserOriginal
+	}
+	if err := validate(input); err != nil {
 		return identity.UnavailableError{}
 	}
 	if input.Current != nil && (!bulkMutationInputTime(input.Current.CreatedAt) || !bulkMutationInputTime(input.Current.LastModified)) {

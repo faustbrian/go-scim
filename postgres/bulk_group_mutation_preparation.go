@@ -34,7 +34,7 @@ func (p *nativePhase) prepareBulkMutationOriginal(ctx context.Context, parent or
 		defer clear(retained)
 		return p.openBulkMutationInput(ctx, retained, parent)
 	}
-	// A Group read may copy the original admission but must never replace it
+	// A projection read may copy the original admission but must never replace it
 	// with a newer observation from the current retry.
 	snapshot := *p
 	snapshot.admission = admission

@@ -200,35 +200,39 @@ func (p *nativePhase) restoreOriginal(ctx context.Context, b kernel.RequestKeyPr
 		}
 		return input, nil
 	}
-	if input.Schema == 3 {
-		return originalInput{}, identity.UnavailableError{}
+	if err := p.validateUserOriginal(input); err != nil {
+		return originalInput{}, err
 	}
+	return input, nil
+}
+
+func (p *nativePhase) validateUserOriginal(input originalInput) error {
 	if input.Schema == 1 {
 		if p.intent.Operation != "" && p.intent.Operation != scim.UserCreate || input.Operation != "" || input.Current != nil || input.KernelVersion != 0 || input.UserAuthority != 0 || input.Generation != 0 {
-			return originalInput{}, identity.UnavailableError{}
+			return identity.UnavailableError{}
 		}
 	} else {
-		if !nativeMutation(input.Operation) || input.Operation != p.intent.Operation || input.ID != p.intent.ResourceID || input.Current == nil && (input.KernelVersion != 0 || input.UserAuthority != 0 || input.Generation != 0) {
-			return originalInput{}, identity.UnavailableError{}
+		if input.Schema != 2 || !nativeMutation(input.Operation) || p.group() || input.Operation != p.intent.Operation || input.ID != p.intent.ResourceID || input.Current == nil && (input.KernelVersion != 0 || input.UserAuthority != 0 || input.Generation != 0) {
+			return identity.UnavailableError{}
 		}
 		if current := input.Current; current != nil {
 			wire, err := json.Marshal(current)
 			if err != nil || len(wire) > 131072 || current.ID != input.ID || !nativeVersion(current.Version) || current.CreatedAt.IsZero() || current.LastModified.Before(current.CreatedAt) || current.LastModified.After(input.At) || input.KernelVersion == 0 || input.UserAuthority == 0 || input.Generation < 1 {
-				return originalInput{}, identity.UnavailableError{}
+				return identity.UnavailableError{}
 			}
 		}
 	}
 	if input.Schema == 1 || input.Current != nil {
 		if _, err := identity.ParseSubjectID(input.ID); err != nil {
-			return originalInput{}, identity.UnavailableError{}
+			return identity.UnavailableError{}
 		}
 	} else if input.ID == "" || len(input.ID) > 128 || !utf8.ValidString(input.ID) {
-		return originalInput{}, identity.UnavailableError{}
+		return identity.UnavailableError{}
 	}
 	if !nativeVersion(input.Version) {
-		return originalInput{}, identity.UnavailableError{}
+		return identity.UnavailableError{}
 	}
-	return input, nil
+	return nil
 }
 
 func (p *nativePhase) preparationAAD(b kernel.RequestKeyPreparationBinding) (envelope.Context, error) {

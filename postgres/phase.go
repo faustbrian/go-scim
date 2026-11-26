@@ -174,7 +174,7 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 		digest := sha256.Sum256(original)
 		clear(original)
 		fields = append(fields, identity.FeatureField{Name: "scim.original", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: digest[:]}})
-		if !p.group() && p.intent.Operation != scim.UserDelete {
+		if p.denialOnly == 0 && !p.group() && p.intent.Operation != scim.UserDelete {
 			attributes, err := p.prepareChangedAttributes(ctx)
 			if err != nil {
 				return err
@@ -241,7 +241,7 @@ func (p *nativePhase) ValidateFeatureCommand(command identity.Command, plan kern
 	} else if plan.Lifecycle == nil || *plan.Lifecycle != p.lifecycle() {
 		return identity.InvalidInputError{Field: "scim_command"}
 	}
-	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
+	if p.denialOnly == 0 && (p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch) {
 		expected := kernel.SCIMUserUpdatePlan{Required: len(p.update.Attributes) > 0, ExpectedVersion: p.update.ExpectedVersion}
 		if plan.SCIMUserUpdate == nil || *plan.SCIMUserUpdate != expected {
 			return identity.InvalidInputError{Field: "scim_update_plan"}
@@ -291,6 +291,18 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 	if p.bulk != nil {
 		return p.applyBulkAdmission(ctx, w)
 	}
+	if p.denialOnly != 0 {
+		if !p.bulkDenialMatches(p.denialOnly) {
+			return identity.FeatureReceipt{}, identity.ForbiddenError{}
+		}
+		if p.denialOnly == kernel.FeatureFailureSCIMBulkDependency {
+			state, err := readBulkDependency(ctx, w, p.bulkChild)
+			if err != nil || !state.canFail() {
+				return identity.FeatureReceipt{}, identity.UnavailableError{}
+			}
+		}
+		return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, p.denialOnly)
+	}
 	if p.bootstrap {
 		args := append(scopeArgs(c.Scope), c.Credential.id, c.Credential.expected[:], p.service.profile[:], strconv.FormatUint(c.ConnectionVersion, 10), c.CredentialExpiresAt, strconv.FormatUint(p.original.Admission.AuthorizationEpoch, 10), strconv.FormatUint(p.original.Admission.OrganizationCredentialVersion, 10), string(p.original.Command), p.effect[:])
 		count, err := w.Exec(ctx, `INSERT INTO scim.connections(tenant_id,organization_id,provider_id,connection_id,credential_id,credential_digest,configuration_digest,version,state,expires_at,authority_version,organization_credential_version,command_id,effect_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8::numeric,'active',$9,$10::numeric,$11::numeric,$12,$13) ON CONFLICT DO NOTHING`, args...)
@@ -310,18 +322,6 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 				// failure. The component owner rolls back before all 424s.
 				return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, kernel.FeatureFailureConflict)
 			}
-			if p.denialOnly != 0 {
-				if !p.bulkDenialMatches(p.denialOnly) {
-					return identity.FeatureReceipt{}, identity.ForbiddenError{}
-				}
-				if p.denialOnly == kernel.FeatureFailureSCIMBulkDependency {
-					state, err := readBulkDependency(ctx, w, p.bulkChild)
-					if err != nil || !state.canFail() {
-						return identity.FeatureReceipt{}, identity.UnavailableError{}
-					}
-				}
-				return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, p.denialOnly)
-			}
 			if p.hasStaleBulkPrecondition() {
 				return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, kernel.FeatureFailurePrecondition)
 			}
@@ -329,6 +329,11 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		}
 		return p.applyGroupProjection(ctx, w)
 	} else if nativeMutation(p.intent.Operation) {
+		if p.bulkChild != nil {
+			if err := p.startAcyclicBulkChild(ctx, w); err != nil {
+				return identity.FeatureReceipt{}, err
+			}
+		}
 		if err := p.requireOriginalProjection(ctx, w); err != nil {
 			return identity.FeatureReceipt{}, err
 		}
@@ -354,7 +359,11 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 				}
 			}
 		}
-		return p.applyProjectionMutation(ctx, w)
+		receipt, err := p.applyProjectionMutation(ctx, w)
+		if err != nil || p.bulkChild == nil {
+			return receipt, err
+		}
+		return p.finishBulkMutation(ctx, w, receipt)
 	} else {
 		if p.bulkChild != nil {
 			if err := p.startAcyclicBulkChild(ctx, w); err != nil {
@@ -461,7 +470,7 @@ func (p *nativePhase) checkAdmission(ctx context.Context, w kernel.Work, admissi
 			return err
 		}
 	}
-	if nativeMutation(p.intent.Operation) && !p.group() {
+	if nativeMutation(p.intent.Operation) && !p.group() && (p.denialOnly == 0 || p.original.Current != nil) {
 		if err := w.RequireActiveUserStatus(ctx, p, p.originalUserStatus()); err != nil {
 			return err
 		}
@@ -503,7 +512,7 @@ func (p *nativePhase) executionPlan() (kernel.CommandPlan, error) {
 		plan.Lifecycle = nil
 		plan.Contributors = slices.DeleteFunc(plan.Contributors, func(d kernel.ContributorDescriptor) bool { return d.Owner == "outbox/postgres" })
 	}
-	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
+	if p.denialOnly == 0 && (p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch) {
 		plan.SCIMUserUpdate = &kernel.SCIMUserUpdatePlan{Required: len(p.update.Attributes) > 0, ExpectedVersion: p.update.ExpectedVersion}
 	}
 	return p.coordinator.PrepareCommandPlan(b, p.command, plan)
