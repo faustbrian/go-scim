@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- On an authorized Group Bulk retry, reconcile a previously recorded native
+  denial that predates child failure accounting. Count it once and emit a
+  separate reconciliation audit without changing the original denial.
+
 - Read the terminal response for an admitted Group Bulk request without
   admitting another request, attaching a retry key, or executing a child.
   Replay preserves declaration order and omits unprocessed cutoff skips.

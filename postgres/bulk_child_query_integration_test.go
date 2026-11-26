@@ -65,6 +65,7 @@ func TestNativeGroupBulkChildBoundedCheckpointQueryPlans(t *testing.T) {
 	t.Logf("checkpoint SQL=%s; actual pgx prepared parameter OIDs=%v; Go binding types=string,int,string,[]byte,string,int", bulkChildCheckpointRead, description.ParamOIDs)
 	startOIDs := []uint32{25, 20, 25, 17, 25, 20}
 	successOIDs := []uint32{25, 20, 25, 17, 25, 20, 25}
+	t.Logf("reconciliation checkpoint uses the same SQL with Work binary parameter OIDs=%v", startOIDs)
 	t.Logf("start SQL=%s; Work binary parameter OIDs=%v", bulkChildStart, startOIDs)
 	t.Logf("success SQL=%s; Work binary parameter OIDs=%v", bulkChildSucceed, successOIDs)
 
@@ -94,7 +95,7 @@ func TestNativeGroupBulkChildBoundedCheckpointQueryPlans(t *testing.T) {
 			}
 			phase.parent = identity.CommandID(parentID)
 			version := `"` + phase.row.Command + `"`
-			var readElapsed, startElapsed, successElapsed [3]time.Duration
+			var readElapsed, reconciliationElapsed, startElapsed, successElapsed [3]time.Duration
 			for sample := range readElapsed {
 				tx, err := connection.Begin(f.ctx)
 				if err != nil {
@@ -153,6 +154,12 @@ func TestNativeGroupBulkChildBoundedCheckpointQueryPlans(t *testing.T) {
 						requireBoundedBulkChildQueryPlan(t, parseBulkQueryPlan(t, wire).sanitized(t))
 					}
 					started = time.Now()
+					reconciliationPlan := explainBulkWorkInsert(t, f.ctx, tx, bulkChildCheckpointRead, startOIDs, args)
+					reconciliationElapsed[sample] = time.Since(started)
+					if sample == 0 {
+						requireBoundedBulkChildQueryPlan(t, reconciliationPlan)
+					}
+					started = time.Now()
 					startPlan := explainBulkWorkInsert(t, f.ctx, tx, bulkChildStart, startOIDs, args)
 					startElapsed[sample] = time.Since(started)
 					if sample == 0 {
@@ -188,7 +195,7 @@ func TestNativeGroupBulkChildBoundedCheckpointQueryPlans(t *testing.T) {
 					}
 				}()
 			}
-			t.Logf("checkpoint read client samples=%v; instrumented Work start samples=%v; instrumented Work success samples=%v; each transaction rolled back", readElapsed, startElapsed, successElapsed)
+			t.Logf("checkpoint read client samples=%v; instrumented Work reconciliation read=%v; instrumented Work start=%v; instrumented Work success=%v; each transaction rolled back", readElapsed, reconciliationElapsed, startElapsed, successElapsed)
 		})
 	}
 	var succeeded, groups int

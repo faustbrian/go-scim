@@ -370,22 +370,32 @@ func (p *nativePhase) CheckFeatureCommit(ctx context.Context, w kernel.Work, com
 }
 
 func (p *nativePhase) checkCurrent(ctx context.Context, w kernel.Work) error {
-	c := p.service.config()
 	original, err := p.service.restoreAdmission(p.original.Admission, p.original.At)
-	if err != nil || !liveConnection(ctx, original.connection) {
+	if err != nil {
 		return identity.ForbiddenError{}
 	}
-	if err := w.RequireActiveDirectoryAuthority(ctx, p, original.directory); err != nil {
+	return p.checkAdmission(ctx, w, original)
+}
+
+// Original execution and historical denial reconciliation use the same owner
+// fences, but reconciliation uses the separately authenticated current call.
+// Neither path may refresh the observation or extend its source deadline.
+func (p *nativePhase) checkAdmission(ctx context.Context, w kernel.Work, admission invocation) error {
+	c := p.service.config()
+	if !liveConnection(ctx, admission.connection) || admission.connection.Scope != c.Scope || admission.directory.Query != c.directoryQuery() {
+		return identity.ForbiddenError{}
+	}
+	if err := w.RequireActiveDirectoryAuthority(ctx, p, admission.directory); err != nil {
 		return err
 	}
-	if err := p.service.organizations.RequireCredentialAuthority(ctx, w, p, original.organization); err != nil {
+	if err := p.service.organizations.RequireCredentialAuthority(ctx, w, p, admission.organization); err != nil {
 		return err
 	}
-	if err := authoritypg.RequireAuthority(ctx, w, c.authorityScope(), original.epoch, c.MaximumDuration); err != nil {
+	if err := authoritypg.RequireAuthority(ctx, w, c.authorityScope(), admission.epoch, c.MaximumDuration); err != nil {
 		return identity.ForbiddenError{}
 	}
 	if !p.bootstrap {
-		if err := p.requireConnection(ctx, w, original); err != nil {
+		if err := p.requireConnection(ctx, w, admission); err != nil {
 			return err
 		}
 	}
@@ -395,7 +405,7 @@ func (p *nativePhase) checkCurrent(ctx context.Context, w kernel.Work) error {
 		}
 	}
 	now, err := w.DatabaseTime(ctx)
-	if err != nil || !now.Before(original.connection.AuthorityValidUntil) || !now.Before(c.CredentialExpiresAt) {
+	if err != nil || !now.Before(admission.connection.AuthorityValidUntil) || !now.Before(c.CredentialExpiresAt) {
 		return identity.ForbiddenError{}
 	}
 	return nil

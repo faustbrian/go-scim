@@ -168,13 +168,17 @@ func (p *bulkChildExecution) args() []any {
 
 func (s *Service) readBulkChild(ctx context.Context, phase *bulkChildExecution) (scim.BulkChildResult, bool, error) {
 	var status string
-	var code *int16
+	var code *int64
 	var resource, version *string
 	var ready bool
 	err := s.pool.Raw().QueryRow(ctx, bulkChildCheckpointRead, phase.args()...).Scan(&status, &code, &resource, &version, &ready)
 	if err != nil {
 		return scim.BulkChildResult{}, false, identity.UnavailableError{}
 	}
+	return decodeBulkChildCheckpoint(phase, status, code, resource, version, ready)
+}
+
+func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *int64, resource, version *string, ready bool) (scim.BulkChildResult, bool, error) {
 	if status == "succeeded" && code != nil && *code == 201 && resource != nil && *resource == phase.original.ID && version != nil && *version == string(phase.original.Version) {
 		return scim.BulkChildResult{Status: scim.BulkChildSucceeded, Code: 201, ResourceID: *resource, Version: scim.Version(*version)}, false, nil
 	}

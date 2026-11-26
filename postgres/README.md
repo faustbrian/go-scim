@@ -67,8 +67,11 @@ do not count as failures; retry the same request and index to recover the
 checkpoint when it is known. Call `ReadResult` with the exact original request
 to read the complete response once all retained children have settled. The
 read neither admits requests nor attaches retry keys. `scim.ErrBulkIncomplete`
-means no terminal response is available; it returns no partial bytes. Other
-child kinds, cyclic execution and historical reconciliation remain open.
+means no terminal response is available; it returns no partial bytes. If an
+older native writer recorded a denial without settling its child checkpoint,
+retry that child with `ExecuteChild`. Reconciliation uses current authority
+and preserves the original denial and security audit. Other child kinds and
+cyclic execution remain open.
 
 ## Composition
 

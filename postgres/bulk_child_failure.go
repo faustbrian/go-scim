@@ -9,6 +9,8 @@ import (
 	scim "github.com/faustbrian/go-scim"
 )
 
+var _ kernel.SCIMBulkChildReconciler = (*nativePhase)(nil)
+
 const bulkChildFail = `WITH failed AS (
  UPDATE scim.bulk_children AS child SET status='failed',result_code=$7
  FROM scim.bulk_requests AS parent
@@ -56,24 +58,117 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 	if err := p.checkCurrent(ctx, w); err != nil {
 		return err
 	}
-	var cutoff bool
-	if err := readBulkFailureCheckpoint(ctx, w, bulkChildFail, &cutoff, append(phase.args(), status)...); err != nil {
+	cutoff, err := p.projectBulkChildFailure(ctx, w, status)
+	if err != nil {
 		return err
 	}
 	if !cutoff {
 		return nil
 	}
-	children, err := skipAdmittedBulkChildren(ctx, w, phase.parent)
+	// Appending a large cutoff set can span the original authority expiry.
+	return p.checkCurrent(ctx, w)
+}
+
+// ReconcileSCIMBulkChildFailure projects only the retained terminal denial.
+// Current authority permits this checkpoint repair, not another Group attempt
+// or renewal of the original command's execution authority.
+func (p *nativePhase) ReconcileSCIMBulkChildFailure(ctx context.Context, w kernel.Work, failure kernel.FeatureFailureCode) (bool, error) {
+	if err := p.checkBulkChildReconciliationScope(w); err != nil {
+		return false, err
+	}
+	var status int
+	switch failure {
+	case kernel.FeatureFailureInvalidGroupMember:
+		status = 400
+	case kernel.FeatureFailureConflict:
+		status = 409
+	default:
+		return false, identity.UnavailableError{}
+	}
+	if err := p.checkAdmission(ctx, w, p.admission); err != nil {
+		return false, err
+	}
+	checkpoint, ready, err := p.readBulkChildCheckpoint(ctx, w)
 	if err != nil {
-		return err
+		return false, err
+	}
+	if checkpoint.Status == scim.BulkChildFailed && checkpoint.Code == status {
+		return false, nil
+	}
+	if checkpoint.Status != scim.BulkChildAdmitted || !ready {
+		return false, identity.UnavailableError{}
+	}
+	if _, err := p.projectBulkChildFailure(ctx, w, status); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (p *nativePhase) projectBulkChildFailure(ctx context.Context, w kernel.Work, status int) (bool, error) {
+	var cutoff bool
+	if err := readBulkFailureCheckpoint(ctx, w, bulkChildFail, &cutoff, append(p.bulkChild.args(), status)...); err != nil {
+		return false, err
+	}
+	if !cutoff {
+		return false, nil
+	}
+	children, err := skipAdmittedBulkChildren(ctx, w, p.bulkChild.parent)
+	if err != nil {
+		return false, err
 	}
 	if len(children) > 0 {
 		if err := w.PersistSCIMBulkChildSkipAudits(ctx, p, children); err != nil {
-			return err
+			return false, err
 		}
 	}
-	// Appending a large cutoff set can span the original authority expiry.
-	return p.checkCurrent(ctx, w)
+	return true, nil
+}
+
+// CheckSCIMBulkChildReconciliation refences the same current observations after
+// the kernel has appended its reconciliation audit, without reading new proof.
+func (p *nativePhase) CheckSCIMBulkChildReconciliation(ctx context.Context, w kernel.Work) error {
+	if err := p.checkBulkChildReconciliationScope(w); err != nil {
+		return err
+	}
+	return p.checkAdmission(ctx, w, p.admission)
+}
+
+func (p *nativePhase) checkBulkChildReconciliationScope(w kernel.Work) error {
+	if p == nil || p.service == nil || p.bulk != nil || p.bootstrap || p.bulkChild == nil || p.intent.Operation != scim.GroupCreate {
+		return identity.ForbiddenError{}
+	}
+	phase := p.bulkChild
+	binding, registration, lifecycle, err := w.FeatureScope(p)
+	spec, ok := p.command.Feature()
+	if err != nil || !ok || binding != spec.Binding || registration != p.registration() || spec.Operation != registration.Operation || lifecycle != p.lifecycle() {
+		return identity.ForbiddenError{}
+	}
+	if binding.CommandID != phase.original.Command || binding.CorrelationID != string(phase.parent) || binding.RecordID != phase.original.ID ||
+		phase.row.Command != string(binding.CommandID) || phase.row.Resource != binding.RecordID || phase.row.Cyclic {
+		return identity.ForbiddenError{}
+	}
+	if p.original.Command != phase.original.Command || p.original.ID != phase.original.ID || p.original.Version != phase.original.Version ||
+		p.original.Operation != scim.GroupCreate || phase.original.Operation != scim.GroupCreate {
+		return identity.ForbiddenError{}
+	}
+	return nil
+}
+
+func (p *nativePhase) readBulkChildCheckpoint(ctx context.Context, w kernel.Work) (scim.BulkChildResult, bool, error) {
+	rows, err := w.Query(ctx, bulkChildCheckpointRead, p.bulkChild.args()...)
+	if err != nil {
+		return scim.BulkChildResult{}, false, identity.UnavailableError{}
+	}
+	defer rows.Close()
+	var status string
+	// The Work scanner allows a nullable integer only at int64 width.
+	var code *int64
+	var resource, version *string
+	var ready bool
+	if !rows.Next() || rows.Scan(&status, &code, &resource, &version, &ready) != nil || rows.Next() || rows.Err() != nil {
+		return scim.BulkChildResult{}, false, identity.UnavailableError{}
+	}
+	return decodeBulkChildCheckpoint(p.bulkChild, status, code, resource, version, ready)
 }
 
 func readBulkFailureCheckpoint(ctx context.Context, w kernel.Work, statement string, out any, args ...any) error {
