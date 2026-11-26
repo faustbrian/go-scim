@@ -138,12 +138,28 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 	response, err := execute(ctx, scim.Request{Operation: operation, ResourceID: target, IfMatch: phase.ifMatch, Credential: request.Credential, Body: resolved.Data, ContentType: "application/scim+json"})
 	if err != nil {
 		var protocol *scim.Error
-		if !phase.acknowledgedFailure && errors.As(err, &protocol) && nativeMutation(operation) {
+		if !phase.acknowledgedFailure && errors.As(err, &protocol) && protocol != nil {
 			var code kernel.FeatureFailureCode
 			p := i.phase
 			switch protocol.StatusCode() {
+			case 400:
+				if p == nil && operation == scim.GroupCreate && protocol.SCIMType() == "invalidValue" {
+					// The selected resource protocol rejected the exact resolved
+					// child before Prepare. Only this finite type is retained;
+					// do not relabel other 400s or a started attempt.
+					p = &nativePhase{service: s.native, bulkChild: phase, admission: i, original: phase.original, intent: scim.WriteIntent{
+						Operation: operation, Scope: i.connection.Scope,
+						CanonicalRequest: []byte("identity.scim.bulk.group-create-invalid-value.v1"),
+					}}
+					coordinator, registry, setupErr := s.native.coordinator(p)
+					if setupErr != nil {
+						return result, setupErr
+					}
+					p.coordinator, p.registry = coordinator, registry
+					code = kernel.FeatureFailureGroupCreateInvalidValue
+				}
 			case 404:
-				if p != nil {
+				if nativeMutation(operation) && p != nil {
 					missing := kernel.FeatureFailureGroupMissing
 					if !p.group() {
 						missing = kernel.FeatureFailureUserMissing
@@ -153,14 +169,14 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 					}
 				}
 			case 412:
-				if p != nil && p.hasStaleBulkPrecondition() {
+				if nativeMutation(operation) && p != nil && p.hasStaleBulkPrecondition() {
 					code = kernel.FeatureFailurePrecondition
 					if !p.group() {
 						code = kernel.FeatureFailureUserVersionMismatch
 					}
 				}
 			case 428:
-				if p == nil && phase.ifMatch == "" {
+				if nativeMutation(operation) && p == nil && phase.ifMatch == "" {
 					// Ordinary validation rejected the missing precondition
 					// before Prepare. The admitted child already binds the full
 					// request and original authority; do not read the projection.
@@ -221,6 +237,12 @@ func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
 	if code == kernel.FeatureFailureSCIMBulkDependency {
 		return p.bulkChild != nil && (nativeMutation(p.intent.Operation) || p.intent.Operation == scim.GroupCreate) && !p.bulkChild.row.Cyclic &&
 			len(p.bulkChild.row.Dependencies) > 0 && p.original == p.bulkChild.original && p.intent.Operation == p.original.Operation
+	}
+	if code == kernel.FeatureFailureGroupCreateInvalidValue {
+		return p.bulkChild != nil && !p.bulkChild.row.Cyclic && p.intent.Operation == scim.GroupCreate &&
+			p.original.Operation == p.intent.Operation && p.original == p.bulkChild.original &&
+			p.original.ID == p.bulkChild.row.Resource && p.original.ID != "" &&
+			p.intent.ResourceID == "" && p.intent.IfMatch == "" && p.bulkChild.ifMatch == ""
 	}
 	if p.bulkChild == nil || p.bulkChild.row.Cyclic || !nativeMutation(p.intent.Operation) || p.intent.ResourceID != p.original.ID || p.original.Operation != p.intent.Operation {
 		return false

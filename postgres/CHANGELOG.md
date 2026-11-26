@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Retain a Group-create `invalidValue` reported before writes as a protected
+  Bulk child denial. Count it toward cutoff and replay the exact result.
+
 - Drive the admitted mixed Bulk graph in one bounded native call. Preserve
   original component order, independent commits, and exact terminal replay;
   return no Bulk response on an incomplete or unknown outcome.
