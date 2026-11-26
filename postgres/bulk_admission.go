@@ -27,9 +27,9 @@ type GroupBulkService struct {
 	retainTypedValidation bool
 }
 
-// WithTypedValidation returns a copy that retains exact pre-Prepare 400
-// results for acyclic resource operations. Apply the schema expansion first
-// and select this profile on every reader sharing the connection
+// WithTypedValidation returns a copy that retains exact pre-write 400 results
+// for acyclic resource operations. Apply the typed and snapshot schema
+// expansions first and select this profile on every reader sharing the connection
 // before relying on delivery of its new typed results. Original admission
 // identities and previously retained results are unchanged.
 func (s *GroupBulkService) WithTypedValidation() *GroupBulkService {

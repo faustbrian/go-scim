@@ -8,9 +8,8 @@ import (
 	scim "github.com/faustbrian/go-scim"
 )
 
-// These are the operation-specific resource request errors produced before
-// Prepare. Snapshot-derived errors such as noTarget are not classified here.
-var bulkPrePrepareValidation = [...]struct {
+// The closed wire types can be retained only before any resource commit.
+var bulkValidationDenials = [...]struct {
 	code kernel.FeatureFailureCode
 	kind string
 }{
@@ -19,13 +18,14 @@ var bulkPrePrepareValidation = [...]struct {
 	{kernel.FeatureFailureSCIMBulkInvalidSyntax, "invalidSyntax"},
 	{kernel.FeatureFailureSCIMBulkInvalidPath, "invalidPath"},
 	{kernel.FeatureFailureSCIMBulkUntypedBadRequest, ""},
+	{kernel.FeatureFailureSCIMBulkNoTarget, "noTarget"},
 }
 
 func bulkValidationKind(op scim.Operation, code kernel.FeatureFailureCode) (string, bool) {
 	if !nativeCreate(op) && !nativeMutation(op) {
 		return "", false
 	}
-	for _, entry := range bulkPrePrepareValidation {
+	for _, entry := range bulkValidationDenials {
 		if entry.code != code {
 			continue
 		}
@@ -36,7 +36,7 @@ func bulkValidationKind(op scim.Operation, code kernel.FeatureFailureCode) (stri
 			return entry.kind, !nativeDelete(op)
 		case kernel.FeatureFailureSCIMBulkInvalidSyntax:
 			return entry.kind, nativeCreate(op) || replace
-		case kernel.FeatureFailureSCIMBulkInvalidPath:
+		case kernel.FeatureFailureSCIMBulkInvalidPath, kernel.FeatureFailureSCIMBulkNoTarget:
 			return entry.kind, patch
 		default:
 			return entry.kind, true
@@ -46,10 +46,17 @@ func bulkValidationKind(op scim.Operation, code kernel.FeatureFailureCode) (stri
 }
 
 func (p *bulkChildExecution) validationFailure(kind string) kernel.FeatureFailureCode {
+	if kind == "noTarget" {
+		return 0 // Only evaluation against the original snapshot can prove this.
+	}
+	return p.typedValidationFailure(kind)
+}
+
+func (p *bulkChildExecution) typedValidationFailure(kind string) kernel.FeatureFailureCode {
 	if !p.retainTypedValidation || p.row.Cyclic {
 		return 0
 	}
-	for _, entry := range bulkPrePrepareValidation {
+	for _, entry := range bulkValidationDenials {
 		if entry.kind == kind {
 			if _, ok := bulkValidationKind(p.original.Operation, entry.code); ok {
 				return entry.code
@@ -73,7 +80,47 @@ func (p *nativePhase) typedValidationMatches(code kernel.FeatureFailureCode) boo
 	if nativeCreate(p.intent.Operation) {
 		return p.original.ID == child.row.Resource && p.intent.ResourceID == "" && p.intent.IfMatch == ""
 	}
+	if code == kernel.FeatureFailureSCIMBulkNoTarget && (p.original.Current == nil || p.intent.IfMatch == "" || p.original.Current.Version != p.intent.IfMatch) {
+		return false
+	}
 	return p.original.ID == p.intent.ResourceID
+}
+
+// Prepare copies only the original immutable input. Abort can observe its
+// resource validation result before Commit, but never persist a denial itself.
+func (i *invocation) observeBulkValidationAbort(prepared scim.PreparedWrite) {
+	if i == nil || i.phase == nil || i.bulkChild == nil || i.phase.bulkChild != i.bulkChild ||
+		!i.prepareStarted || i.commitStarted || i.snapshotFailure != 0 || i.bulkChild.plannerDenial != 0 ||
+		prepared.Replay != nil || prepared.Failure == nil || prepared.Failure.StatusCode() != 400 ||
+		!i.phase.matchesPreparedIntent(prepared.Intent) {
+		return
+	}
+	p := i.phase
+	kind := prepared.Failure.SCIMType()
+	if kind != "noTarget" && kind != "mutability" && kind != "invalidValue" {
+		return
+	}
+	code := i.bulkChild.typedValidationFailure(kind)
+	if code == 0 || !p.typedValidationMatches(code) {
+		return
+	}
+	if nativeCreate(p.intent.Operation) {
+		// A create can exceed the prospective response limit after Prepare,
+		// but there is no prior resource on which to evaluate mutability.
+		meta := prepared.CreateMetadata
+		if kind != "invalidValue" || prepared.Current != nil || prepared.UpdateMetadata != nil || meta == nil ||
+			meta.ID != p.original.ID || meta.Version != p.original.Version || !meta.CreatedAt.Equal(p.original.At) || !meta.LastModified.Equal(p.original.At) {
+			return
+		}
+	} else {
+		current, original := prepared.Current, p.original.Current
+		if nativeDelete(p.intent.Operation) || prepared.CreateMetadata != nil || current == nil || original == nil ||
+			current.ID != p.original.ID || current.ID != original.ID || current.Version != original.Version ||
+			p.intent.IfMatch == "" || original.Version != p.intent.IfMatch {
+			return
+		}
+	}
+	i.snapshotFailure = code
 }
 
 func (p *bulkChildExecution) retainedTypedValidation(status string, code *int64, target, version *string, denial int64) (scim.BulkChildResult, error) {

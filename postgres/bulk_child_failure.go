@@ -64,7 +64,8 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 	case kernel.FeatureFailureInvalidGroupMember:
 		status = 400
 	case kernel.FeatureFailureSCIMBulkInvalidValue, kernel.FeatureFailureSCIMBulkMutability,
-		kernel.FeatureFailureSCIMBulkInvalidSyntax, kernel.FeatureFailureSCIMBulkInvalidPath, kernel.FeatureFailureSCIMBulkUntypedBadRequest:
+		kernel.FeatureFailureSCIMBulkInvalidSyntax, kernel.FeatureFailureSCIMBulkInvalidPath, kernel.FeatureFailureSCIMBulkUntypedBadRequest,
+		kernel.FeatureFailureSCIMBulkNoTarget:
 		if p.denialOnly != failure || !p.typedValidationMatches(failure) {
 			return identity.ForbiddenError{}
 		}

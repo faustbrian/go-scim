@@ -109,13 +109,15 @@ func prepareError(err error) error {
 
 func (b *protocolBridge) Commit(ctx context.Context, prepared scim.PreparedWrite, change scim.Change) (scim.WriteResult, error) {
 	i, err := currentInvocation(ctx)
+	if i != nil && i.bulkChild != nil {
+		i.commitStarted = true
+	}
 	if err != nil || i.phase == nil {
 		return scim.WriteResult{}, identity.ForbiddenError{}
 	}
 	p := i.phase
-	expected := p.intent
 	actual := prepared.Intent
-	if actual.CommandID != expected.CommandID || actual.Scope != expected.Scope || actual.Connection != expected.Connection || actual.Operation != expected.Operation || actual.ResourceID != expected.ResourceID || actual.IfMatch != expected.IfMatch || actual.IdempotencyKey != expected.IdempotencyKey || !bytes.Equal(actual.CanonicalRequest, expected.CanonicalRequest) || prepared.Replay != nil || !liveConnection(ctx, i.connection) {
+	if !p.matchesPreparedIntent(actual) || prepared.Replay != nil || !liveConnection(ctx, i.connection) {
 		return scim.WriteResult{}, identity.ForbiddenError{}
 	}
 	if ctx.Value(groupCyclePreparationKey{}) != nil && (!b.groups || actual.Operation != scim.GroupCreate) {
@@ -371,11 +373,24 @@ func (b *protocolBridge) readOriginal(ctx context.Context, p *nativePhase) (scim
 	return *resource, nil
 }
 
-func (*protocolBridge) Abort(ctx context.Context, _ scim.PreparedWrite) error {
+func (p *nativePhase) matchesPreparedIntent(actual scim.WriteIntent) bool {
+	expected := p.intent
+	return actual.CommandID == expected.CommandID && actual.Scope == expected.Scope && actual.Connection == expected.Connection &&
+		actual.Operation == expected.Operation && actual.ResourceID == expected.ResourceID && actual.IfMatch == expected.IfMatch &&
+		actual.IdempotencyKey == expected.IdempotencyKey && bytes.Equal(actual.CanonicalRequest, expected.CanonicalRequest)
+}
+
+func (b *protocolBridge) Abort(ctx context.Context, prepared scim.PreparedWrite) error {
 	// Prepare holds no locks, reservation or transaction. ResolvePreparedRequestKey
 	// owns only immutable correlation; Commit's coordinator closes every Work.
 	if ctx == nil {
 		return identity.InvalidInputError{Field: "scim_context"}
 	}
-	return ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if i, err := currentInvocation(ctx); err == nil && i.phase != nil && i.phase.service == b.service && groupOperation(i.phase.intent.Operation) == b.groups {
+		i.observeBulkValidationAbort(prepared)
+	}
+	return nil
 }

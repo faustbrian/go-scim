@@ -96,6 +96,13 @@ planner-invalid PATCH paths under the declared resource permission. A symbolic
 PATCH still waits for its original predecessor; a confirmed predecessor
 failure takes precedence over the PATCH validation error.
 
+Install the expansion from `BulkSnapshotValidationMigrationSource` before
+using this profile with snapshot-dependent validation. A PATCH can retain
+`noTarget` or `mutability` from its original prepared resource, without
+running a write or changing the result on a later retry. The expansion adds
+one finite denial code without backfilling checkpoints. Older readers keep
+reading existing codes but reject the new result instead of mislabeling it.
+
 Install `BulkChildExecutionMigrationSource` to call `ExecuteChild` with the
 exact original request and a zero-based operation index. This selection runs
 acyclic Group children in the retained dependency order. Install the further

@@ -214,10 +214,15 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 			p := i.phase
 			switch protocol.StatusCode() {
 			case 400:
+				kind := protocol.SCIMType()
 				if i.prepareStarted || p != nil {
+					// Abort observes the original prepared input. Only the final
+					// disclosed error may corroborate a pre-write denial.
+					if observed, ok := bulkValidationKind(operation, i.snapshotFailure); p != nil && !i.commitStarted && ok && observed == kind {
+						code = i.snapshotFailure
+					}
 					break
 				}
-				kind := protocol.SCIMType()
 				code = phase.validationFailure(kind)
 				canonical := "identity.scim.bulk.pre-prepare.v1:" + kind
 				if operation == scim.GroupCreate && kind == "invalidValue" {

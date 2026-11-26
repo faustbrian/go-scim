@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Retain pre-write Bulk validation errors found after Prepare against the
+  original snapshot, including PATCH `noTarget`, `mutability`, and replay.
+
 - Retain malformed User/Group creates and planner-invalid PATCH paths as
   typed child results in opt-in Bulk. Preserve dependency and cutoff order.
 
