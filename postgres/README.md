@@ -341,6 +341,12 @@ changed identity link. A still-present edge to an inactive or deleted User is
 reported separately, not treated as automatic removal authority. The legacy
 role query still returns true only for a live exact edge to an active User.
 
+`ReadDirectoryUserStates` reads up to 128 mapped source Users in one snapshot
+under the original observation. It returns explicit active, inactive or
+retained-deletion states with exact revisions. A missing or changed mapping
+or an omitted activity flag returns an unproven entry, never a reason to
+withdraw a local grant. A failed read returns no usable report.
+
 For a role-bearing child, bind the original source, Group edge and exact
 organization grant/role fields. `LockDirectoryGroupRole` orders the
 directory, organization and source checks before the organization's role

@@ -130,10 +130,18 @@ func (s *GroupsService) ReadDirectoryGroupEdgeStates(ctx context.Context, observ
 }
 
 func directoryGroupRoleEdgeArguments(native *Service, b DirectorySourceBindings, original invocation, groups, members []string) []any {
+	return directorySourceReadArguments(native, b, original, groups, members)
+}
+
+func directorySourceReadArguments(native *Service, b DirectorySourceBindings, original invocation, targets ...[]string) []any {
 	c := native.config()
-	return append(scopeArgs(b.Scope), strconv.FormatUint(b.ConnectionVersion, 10),
+	args := append(scopeArgs(b.Scope), strconv.FormatUint(b.ConnectionVersion, 10),
 		strconv.FormatUint(original.epoch, 10), strconv.FormatUint(original.organization.CredentialVersion, 10),
-		c.Credential.id, c.Credential.expected[:], native.profile[:], c.CredentialExpiresAt, b.ValidUntil, groups, members)
+		c.Credential.id, c.Credential.expected[:], native.profile[:], c.CredentialExpiresAt, b.ValidUntil)
+	for _, target := range targets {
+		args = append(args, target)
+	}
+	return args
 }
 
 func classifyDirectoryGroupEdge(edge DirectoryGroupRoleEdge, baseURL string, groupFound, groupDeleted bool, groupWire []byte, userFound, userDeleted bool, localUser string, userWire []byte) (DirectoryGroupEdgeState, error) {
@@ -213,16 +221,20 @@ func directoryGroupRoleLocalID(id string) bool {
 	return true
 }
 
-// Unnest drives full-key Group and User point lookups in one statement. Keep
-// oversized existing resources distinct from absence without returning them.
-const directoryGroupRoleEdgesSQL = `WITH admitted AS MATERIALIZED (
+// Both source previews bind the exact connection in the same snapshot as the
+// resource read; later owner rechecks do not extend the original observation.
+const directorySourceReadCTE = `WITH admitted AS MATERIALIZED (
  SELECT tenant_id,organization_id,provider_id,connection_id FROM scim.connections
  WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4
  AND version=$5::numeric AND authority_version=$6::numeric AND organization_credential_version=$7::numeric
  AND credential_id=$8 AND credential_digest=$9 AND configuration_digest=$10 AND expires_at=$11 AND state='active'
  AND clock_timestamp()<$12 AND clock_timestamp()<expires_at
 )
-SELECT e.ordinal,g.resource_id IS NOT NULL,g.deleted_at IS NOT NULL,
+`
+
+// Unnest drives full-key Group and User point lookups in one statement. Keep
+// oversized existing resources distinct from absence without returning them.
+const directoryGroupRoleEdgesSQL = directorySourceReadCTE + `SELECT e.ordinal,g.resource_id IS NOT NULL,g.deleted_at IS NOT NULL,
  g.wire,
  u.resource_id IS NOT NULL,u.deleted_at IS NOT NULL,coalesce(u.user_id::text,''),
  u.wire

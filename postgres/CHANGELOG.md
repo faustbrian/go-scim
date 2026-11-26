@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Read ordered SCIM User source states for directory reconciliation, retaining
+  exact native revisions and distinguishing unknown mappings from deletions.
+
 - Bind Bulk execution and discovery to the same native executor and an
   authenticated, once-per-attempt transport admission decision.
 
