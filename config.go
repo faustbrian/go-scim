@@ -70,6 +70,7 @@ type protocolService struct {
 	config                Config
 	profile               resourceProfile
 	groups                groupDependencies
+	bulkDiscovery         bulkDiscoverySelection
 	discoveryProfiles     []discoveryProfile
 	rootSearchUnavailable bool
 	rootSearch            *rootSearchProfile

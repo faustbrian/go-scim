@@ -1,6 +1,36 @@
 package scim
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+
+	authentication "github.com/faustbrian/go-authentication/v2"
+)
+
+type bulkDiscoverySelection struct {
+	policy BulkPolicy
+	admit  func(context.Context) *Error
+}
+
+// ReadServiceProviderConfigWithBulk renders discovery for an explicitly
+// selected Bulk executor. Composition must supply the effective policy from
+// the actual executor on this same connection, not an independent setting.
+// It retains ordinary discovery authentication, authorization, bounds, and
+// timeout. Neither this service nor ordinary discovery is modified, and this
+// method does not execute or route Bulk requests. If supplied, admit is borrowed
+// for one synchronous call after current authentication and authorization and
+// before rendering. It must respect ctx and return nil to allow the read.
+func (s *UsersService) ReadServiceProviderConfigWithBulk(ctx context.Context, credential authentication.BearerCredential, policy BulkPolicy, admit func(context.Context) *Error) (Response, error) {
+	if s == nil || s.service == nil {
+		return Response{}, failure(503, "")
+	}
+	if !policy.valid() {
+		return Response{}, failure(400, "invalidValue")
+	}
+	selected := *s.service
+	selected.bulkDiscovery = bulkDiscoverySelection{policy: policy, admit: admit}
+	return selected.execute(ctx, Request{Operation: ServiceProviderConfig, Credential: credential})
+}
 
 func (s *protocolService) discovery(op Operation, id string) (any, error) {
 	profiles := s.discoveryProfiles
@@ -10,6 +40,13 @@ func (s *protocolService) discovery(op Operation, id string) (any, error) {
 	switch op {
 	case ServiceProviderConfig:
 		d := map[string]any{"schemas": []string{configSchema}, "patch": map[string]any{"supported": true}, "bulk": map[string]any{"supported": false, "maxOperations": 0, "maxPayloadSize": 0}, "filter": map[string]any{"supported": true, "maxResults": s.config.Limits.PageMax}, "changePassword": map[string]any{"supported": false}, "sort": map[string]any{"supported": true}, "etag": map[string]any{"supported": true}, "authenticationSchemes": []any{map[string]any{"type": "oauthbearertoken", "name": "OAuth Bearer Token", "description": "Scoped bearer token", "specUri": "https://www.rfc-editor.org/rfc/rfc6750", "primary": true}}}
+		if policy := s.bulkDiscovery.policy; policy != (BulkPolicy{}) {
+			d["bulk"] = map[string]any{
+				"supported":      true,
+				"maxOperations":  policy.MaxOperations,
+				"maxPayloadSize": policy.MaxPayloadBytes,
+			}
+		}
 		if s.config.DocumentationURI != "" {
 			d["documentationUri"] = s.config.DocumentationURI
 		}

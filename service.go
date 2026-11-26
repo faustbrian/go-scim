@@ -117,6 +117,11 @@ func (s *protocolService) execute(parent context.Context, r Request) (out Respon
 	}
 	switch r.Operation {
 	case ServiceProviderConfig, SchemasList, SchemaGet, ResourceTypesList, ResourceTypeGet:
+		if r.Operation == ServiceProviderConfig && s.bulkDiscovery.admit != nil {
+			if denial := s.bulkDiscovery.admit(ctx); denial != nil {
+				return Response{}, denial
+			}
+		}
 		d, e := s.discovery(r.Operation, r.ResourceID)
 		if e != nil {
 			return Response{}, e

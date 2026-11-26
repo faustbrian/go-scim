@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"time"
 )
 
 // Error is a stable redacted RFC 7644 error. Its fields are private: arbitrary
@@ -14,6 +15,7 @@ import (
 type Error struct {
 	code         int
 	kind, detail string
+	retryAfter   uint32
 }
 
 // Error returns only a fixed safe diagnostic.
@@ -41,6 +43,30 @@ func (e *Error) SCIMType() string {
 	return e.kind
 }
 
+// RetryAfterSeconds reports a known bounded quota wait for the Retry-After
+// header. Zero means no hint. It is not encoded as a SCIM Error field.
+func (e *Error) RetryAfterSeconds() uint32 {
+	if e == nil {
+		return 0
+	}
+	return e.retryAfter
+}
+
+// NewRateLimitedError returns an untyped SCIM 429 with a rounded and capped
+// retry delay. An unknown or nonpositive wait fails closed as 503 instead.
+func NewRateLimitedError(wait time.Duration) *Error {
+	if wait <= 0 {
+		return failure(503, "")
+	}
+	seconds := min(int64(wait/time.Second), 3600)
+	if seconds < 3600 && wait%time.Second != 0 {
+		seconds++
+	}
+	limited := failure(429, "")
+	limited.retryAfter = uint32(seconds)
+	return limited
+}
+
 // Format redacts every diagnostic verb, including %#v.
 func (e *Error) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, e.Error()) }
 
@@ -58,12 +84,12 @@ func (e *Error) MarshalJSON() ([]byte, error) {
 }
 
 func failure(code int, kind string) *Error {
-	details := map[int]string{400: "Invalid request", 401: "Authentication required", 403: "Access denied", 404: "Resource not found", 409: "Request conflict", 412: "Resource version mismatch", 413: "Request too large", 415: "Unsupported representation", 428: "Resource version required", 500: "Request failed", 501: "Operation unsupported", 503: "Authority or outcome unavailable"}
+	details := map[int]string{400: "Invalid request", 401: "Authentication required", 403: "Access denied", 404: "Resource not found", 409: "Request conflict", 412: "Resource version mismatch", 413: "Request too large", 415: "Unsupported representation", 428: "Resource version required", 429: "Too many requests", 500: "Request failed", 501: "Operation unsupported", 503: "Authority or outcome unavailable"}
 	detail, ok := details[code]
 	if !ok {
 		code, kind, detail = 500, "", "Request failed"
 	}
-	return &Error{code, kind, detail}
+	return &Error{code: code, kind: kind, detail: detail}
 }
 
 // CredentialWrite identifies a schema-declared write-only/returned-never target

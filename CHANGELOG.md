@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add redacted, persistence-neutral Bulk request custody and authorized
+  discovery rendering for an explicitly selected executor's effective limits.
+  Support an after-authentication protocol rate decision and bounded 429
+  retry metadata without changing the SCIM Error body shape.
+
 - Suppress resource locations on Bulk errors for unsupported methods,
   without changing the planned dependencies or response-size bound.
 

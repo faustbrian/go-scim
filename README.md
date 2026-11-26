@@ -169,7 +169,10 @@ An executor can use `BulkPlan.ResolveOperation` on the original child index
 with server IDs retained at admission. It substitutes only schema-declared
 references and preserves the original request for replay. It does not look up
 resources, establish their existence or grant execution authority.
-The selected services continue to report Bulk as unsupported.
+Ordinary discovery continues to report Bulk as unsupported. A composition
+with a native Bulk executor can use `BulkRequest` for borrowed request custody
+and the authorized `ReadServiceProviderConfigWithBulk` read with that exact
+executor's effective connection policy. Neither API enables an HTTP route.
 The combined service dispatches Group operations only to GroupStore/GroupMapper
 and User operations only to Store/Mapper. Combined root search requires the
 explicit single mixed-resource snapshot owner and otherwise fails closed rather
