@@ -90,7 +90,11 @@ there is no backfill. Upgrade every process that executes or reads this
 connection's Bulk results before relying on typed results. Older readers
 continue to read existing results, but return `503` rather than mislabel a
 new typed result. The opt-in does not change admitted command identities,
-enable HTTP or discovery, or expose a failed creation's reserved identifier.
+enable HTTP or discovery, or put a reserved identifier on a failed create result.
+The same profile settles malformed User and Group create declarations and
+planner-invalid PATCH paths under the declared resource permission. A symbolic
+PATCH still waits for its original predecessor; a confirmed predecessor
+failure takes precedence over the PATCH validation error.
 
 Install `BulkChildExecutionMigrationSource` to call `ExecuteChild` with the
 exact original request and a zero-based operation index. This selection runs

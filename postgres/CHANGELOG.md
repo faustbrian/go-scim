@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Retain malformed User/Group creates and planner-invalid PATCH paths as
+  typed child results in opt-in Bulk. Preserve dependency and cutoff order.
+
 - Add an opt-in Bulk profile that retains exact resource validation results
   emitted before Prepare, with audited cutoff and identical replay.
 

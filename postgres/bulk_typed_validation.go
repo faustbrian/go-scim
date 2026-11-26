@@ -1,6 +1,8 @@
 package scimpostgres
 
 import (
+	"context"
+
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
 	scim "github.com/faustbrian/go-scim"
@@ -61,7 +63,8 @@ func (p *bulkChildExecution) validationFailure(kind string) kernel.FeatureFailur
 func (p *nativePhase) typedValidationMatches(code kernel.FeatureFailureCode) bool {
 	child := p.bulkChild
 	if child == nil || !child.retainTypedValidation || child.row.Cyclic || p.original != child.original ||
-		p.original.ID == "" || p.original.Operation != p.intent.Operation || p.intent.IfMatch != child.ifMatch {
+		p.original.ID == "" || p.original.Operation != p.intent.Operation || p.intent.IfMatch != child.ifMatch ||
+		child.plannerDenial != 0 && child.plannerDenial != code {
 		return false
 	}
 	if _, ok := bulkValidationKind(p.intent.Operation, code); !ok {
@@ -78,9 +81,45 @@ func (p *bulkChildExecution) retainedTypedValidation(status string, code *int64,
 		target == nil || *target != p.original.ID || *target == "" || version != nil || denial < 0 || denial > 255 {
 		return scim.BulkChildResult{}, identity.UnavailableError{}
 	}
-	kind, ok := bulkValidationKind(p.original.Operation, kernel.FeatureFailureCode(denial))
-	if !ok {
+	retained := kernel.FeatureFailureCode(denial)
+	kind, ok := bulkValidationKind(p.original.Operation, retained)
+	if !ok || p.plannerDenial != 0 && p.plannerDenial != retained {
 		return scim.BulkChildResult{}, identity.UnavailableError{}
 	}
 	return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: 400, SCIMType: kind}, nil
+}
+
+func (s *GroupBulkService) newBulkValidationPhase(admission invocation, child *bulkChildExecution, target, canonical string) (*nativePhase, error) {
+	p := &nativePhase{service: s.native, bulkChild: child, admission: admission, original: child.original, intent: scim.WriteIntent{
+		Operation: child.original.Operation, Scope: admission.connection.Scope, ResourceID: target, IfMatch: child.ifMatch,
+		CanonicalRequest: []byte(canonical),
+	}}
+	coordinator, registry, err := s.native.coordinator(p)
+	if err != nil {
+		return nil, err
+	}
+	p.coordinator, p.registry = coordinator, registry
+	return p, nil
+}
+
+func (s *GroupBulkService) retainPlannerBulkDenial(ctx context.Context, parent *nativePhase, child *bulkChildExecution, target string) (scim.BulkChildResult, error) {
+	kind, ok := bulkValidationKind(child.original.Operation, child.plannerDenial)
+	if !ok {
+		return scim.BulkChildResult{}, identity.UnavailableError{}
+	}
+	p, err := s.newBulkValidationPhase(parent.admission, child, target, "identity.scim.bulk.planner-validation.v1:"+kind)
+	if err != nil {
+		return scim.BulkChildResult{}, err
+	}
+	if err := p.recordBulkProtocolDenial(ctx, child.plannerDenial); err != nil {
+		return scim.BulkChildResult{}, err
+	}
+	result, _, err := s.native.readBulkChild(ctx, child)
+	if err != nil || result != (scim.BulkChildResult{Status: scim.BulkChildFailed, Code: 400, SCIMType: kind}) {
+		return scim.BulkChildResult{}, identity.UnavailableError{}
+	}
+	if err := s.native.recheckRead(ctx, &parent.admission); err != nil {
+		return scim.BulkChildResult{}, err
+	}
+	return result, nil
 }

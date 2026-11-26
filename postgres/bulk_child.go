@@ -18,6 +18,7 @@ type bulkChildExecution struct {
 	cycle                 *groupCreateCycleMember
 	structuralAuthority   bulkChildAuthority
 	retainTypedValidation bool
+	plannerDenial         kernel.FeatureFailureCode
 }
 
 const bulkInvalidChild scim.Operation = "identity.scim.bulk-child-invalid"
@@ -118,18 +119,14 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 	child := parent.bulk.children[ordinal]
 	selected := rows[ordinal]
 	targets := parent.bulk.createTargets()
-	operation, target := parent.bulk.selectChild(ordinal, targets)
+	operation, target, plannerDenial := parent.bulk.selectChild(ordinal, targets)
 	if operation != "" {
 		if err := s.native.decide(ctx, string(operation), target, bulkChildAuthorizationType(operation)); err != nil {
 			return result, err
 		}
 	}
-	phase := newStructuralBulkChild(parent.original, selected, child, targets)
-	structural := phase != nil
-	if !structural {
-		phase = newBulkChildExecution(parent.original, selected, operation, target, scim.Version(child.Version))
-	}
-	phase.retainTypedValidation = parent.bulk.retainTypedValidation
+	phase := parent.bulk.childExecution(parent.original, selected, child, targets, operation, target, plannerDenial)
+	structural := phase.original.Operation == bulkInvalidChild
 	checkpoint, ready, err := s.native.readBulkChild(ctx, phase)
 	if err != nil {
 		return result, err
@@ -138,7 +135,7 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 	// operation would be invalid or unsupported. Replay that retained skip, not
 	// a new operation result. Before cutoff the original errors still apply.
 	if checkpoint.Status != scim.BulkChildSkipped && !structural {
-		if child.Error != nil {
+		if child.Error != nil && phase.plannerDenial == 0 {
 			return result, child.Error
 		}
 		if operation == "" || selected.Cyclic && operation != scim.GroupCreate {
@@ -171,6 +168,9 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 	}
 	if structural {
 		return s.retainStructuralBulkDenial(ctx, parent, phase)
+	}
+	if phase.plannerDenial != 0 {
+		return s.retainPlannerBulkDenial(ctx, parent, phase, target)
 	}
 	allocated := make(map[int]string)
 	for i, declared := range parent.bulk.children {
@@ -226,15 +226,11 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 					code = kernel.FeatureFailureGroupCreateInvalidValue
 				}
 				if code != 0 {
-					p = &nativePhase{service: s.native, bulkChild: phase, admission: i, original: phase.original, intent: scim.WriteIntent{
-						Operation: operation, Scope: i.connection.Scope, ResourceID: target, IfMatch: phase.ifMatch,
-						CanonicalRequest: []byte(canonical),
-					}}
-					coordinator, registry, setupErr := s.native.coordinator(p)
+					var setupErr error
+					p, setupErr = s.newBulkValidationPhase(i, phase, target, canonical)
 					if setupErr != nil {
 						return result, setupErr
 					}
-					p.coordinator, p.registry = coordinator, registry
 				}
 			case 404:
 				if nativeMutation(operation) && p != nil {
@@ -392,20 +388,49 @@ func (p *nativePhase) recordBulkProtocolDenial(ctx context.Context, code kernel.
 func (p *bulkAdmissionPhase) createTargets() map[string]string {
 	targets := make(map[string]string)
 	for i, child := range p.children {
-		if child.Error == nil && bulkCreatesResource(child) && child.BulkID != "" {
+		// A supported malformed create still owns the admitted allocation for
+		// dependency custody. The referring operation requires its own permission.
+		if bulkCreatesResource(child) && child.BulkID != "" && (child.Error == nil || p.retainTypedValidation && structuralBulkInvalidValue(child)) {
 			targets[child.BulkID] = p.allocation[i].Resource
 		}
 	}
 	return targets
 }
 
-func (p *bulkAdmissionPhase) selectChild(ordinal int, targets map[string]string) (scim.Operation, string) {
+func (p *bulkAdmissionPhase) selectChild(ordinal int, targets map[string]string) (scim.Operation, string, kernel.FeatureFailureCode) {
 	child := p.children[ordinal]
-	if child.Error != nil {
-		authority := structuralBulkAuthority(child, targets)
-		return authority.operation, authority.target
+	op, target := selectDeclaredBulkChild(child, targets)
+	if child.Error == nil {
+		return op, target, 0
 	}
-	return selectDeclaredBulkChild(child, targets)
+	if p.retainTypedValidation && child.Error.StatusCode() == 400 {
+		kind := child.Error.SCIMType()
+		if nativeCreate(op) && kind == "invalidValue" {
+			return op, target, kernel.FeatureFailureSCIMBulkInvalidValue
+		}
+		if (op == scim.UserPatch || op == scim.GroupPatch) && target != "" && kind == "invalidPath" {
+			return op, target, kernel.FeatureFailureSCIMBulkInvalidPath
+		}
+	}
+	authority := structuralBulkAuthority(child, targets)
+	return authority.operation, authority.target, 0
+}
+
+func (p *bulkAdmissionPhase) childExecution(parent originalInput, row bulkChildRow, child scim.BulkOperation, targets map[string]string,
+	op scim.Operation, target string, plannerDenial kernel.FeatureFailureCode) *bulkChildExecution {
+	phase := newStructuralBulkChild(parent, row, child, targets)
+	if phase == nil {
+		ifMatch := scim.Version(child.Version)
+		if nativeCreate(op) {
+			// An invalid create precondition is sealed in the admitted request,
+			// but cannot become a precondition on the original create command.
+			ifMatch = ""
+		}
+		phase = newBulkChildExecution(parent, row, op, target, ifMatch)
+		phase.plannerDenial = plannerDenial
+	}
+	phase.retainTypedValidation = p.retainTypedValidation
+	return phase
 }
 
 func selectDeclaredBulkChild(child scim.BulkOperation, targets map[string]string) (scim.Operation, string) {

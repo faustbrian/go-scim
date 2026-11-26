@@ -66,7 +66,7 @@ func (s *GroupBulkService) writeBulkResult(ctx context.Context, prepared prepare
 		if result.Status == scim.BulkChildSkipped {
 			continue
 		}
-		op, target := p.bulk.selectChild(ordinal, targets)
+		op, target, _ := p.bulk.selectChild(ordinal, targets)
 		if op == "" {
 			// Only an exact resource-free denial is disclosed by Bulk authority
 			// alone. Checkpoints with any resource operation still have their
@@ -153,16 +153,12 @@ func (p *nativePhase) readBulkCheckpoints(ctx context.Context) ([]scim.BulkChild
 			r.cyclic != original.Cyclic || !bytes.Equal(r.fingerprint, original.Fingerprint) {
 			return nil, identity.UnavailableError{}
 		}
-		op, target := p.bulk.selectChild(index, targets)
+		op, target, plannerDenial := p.bulk.selectChild(index, targets)
 		if original.Cyclic && op != scim.GroupCreate {
-			op = ""
+			op, target, plannerDenial = "", "", 0
 		}
 		child := p.bulk.children[index]
-		phase := newStructuralBulkChild(p.original, original, child, targets)
-		if phase == nil {
-			phase = newBulkChildExecution(p.original, original, op, target, scim.Version(child.Version))
-		}
-		phase.retainTypedValidation = p.bulk.retainTypedValidation
+		phase := p.bulk.childExecution(p.original, original, child, targets, op, target, plannerDenial)
 		result, err := r.result(phase, cutoff)
 		if err != nil && !errors.Is(err, scim.ErrBulkIncomplete) {
 			return nil, err
