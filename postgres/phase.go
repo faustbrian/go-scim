@@ -384,7 +384,19 @@ func (p *nativePhase) CheckFeatureCommit(ctx context.Context, w kernel.Work, com
 	if command != p.command {
 		return identity.ForbiddenError{}
 	}
-	return p.checkCurrent(ctx, w)
+	if err := p.checkCurrent(ctx, w); err != nil {
+		return err
+	}
+	if p.bulkChild != nil && p.bulkChild.cycle != nil {
+		exists, err := p.checkGroupMembers(ctx, w, true)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return identity.UnavailableError{}
+		}
+	}
+	return nil
 }
 
 func (p *nativePhase) checkCurrent(ctx context.Context, w kernel.Work) error {

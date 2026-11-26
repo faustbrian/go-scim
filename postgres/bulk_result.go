@@ -122,7 +122,7 @@ func (p *nativePhase) readBulkTerminalCheckpoints(ctx context.Context) ([]scim.B
 			return nil, identity.UnavailableError{}
 		}
 		op, target := p.bulk.selectGroupChild(index, targets)
-		if original.Cyclic {
+		if original.Cyclic && op != scim.GroupCreate {
 			op = ""
 		}
 		phase := newBulkGroupExecution(p.original, original, op, target, scim.Version(p.bulk.children[index].Version))
@@ -179,7 +179,7 @@ func (r bulkTerminalCheckpoint) result(phase *bulkChildExecution, cutoff bool) (
 		}
 	case "failed":
 		if phase.original.Operation != "" && r.code != nil && r.resource == nil && r.version == nil {
-			if result, valid := bulkGroupFailureResult(phase.original.Operation, int(*r.code)); valid {
+			if result, valid := phase.failureResult(int(*r.code)); valid {
 				return result, nil
 			}
 		}

@@ -15,13 +15,14 @@ type bulkChildExecution struct {
 	original            originalInput
 	ifMatch             scim.Version
 	acknowledgedFailure bool
+	cycle               *groupCreateCycleMember
 }
 
 // ExecuteChild executes or recovers the original Group mutation at ordinal. The
 // original request and currently authorized connection are required on every
-// call. It advances only an acyclic Group child whose preceding components
-// completed and dependencies succeeded, and cannot start it after the original parent
-// authority expires. Other children are not executed by this selection.
+// call. It advances an acyclic Group child or its all-Group create cycle
+// only after the preceding components and external dependencies allow it.
+// Execution cannot start after the original parent authority expires.
 // A returned result is only this child's checkpoint, never a terminal Bulk
 // response. Retry the exact request and ordinal after an uncertain outcome.
 func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissionRequest, ordinal int) (result scim.BulkChildResult, err error) {
@@ -68,7 +69,7 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		if child.Error != nil {
 			return result, child.Error
 		}
-		if operation == "" || selected.Cyclic {
+		if operation == "" || selected.Cyclic && operation != scim.GroupCreate {
 			return result, scim.NewError(501, "")
 		}
 	}
@@ -77,6 +78,9 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 			return result, err
 		}
 		return checkpoint, nil
+	}
+	if selected.Cyclic {
+		return s.executeGroupCreateCycle(ctx, request, parent, plan, rows, ordinal)
 	}
 	if !ready {
 		return result, identity.ConflictError{}
@@ -273,11 +277,13 @@ func bulkChildVersion(command string) scim.Version { return scim.Version(`"` + c
 // concluded before its immediate predecessor. The preceding component need
 // only be terminal, but explicit dependencies must all have succeeded. Check
 // only those rows instead of repeatedly scanning the completed prefix.
-const bulkChildReady = `NOT parent.cutoff_active AND
+const bulkPriorComponentsReady = `NOT parent.cutoff_active AND
  (child.component_order=0 OR (
   EXISTS (SELECT 1 FROM scim.bulk_children AS prior WHERE prior.parent_id=child.parent_id AND prior.component_order=child.component_order-1)
   AND NOT EXISTS (SELECT 1 FROM scim.bulk_children AS prior WHERE prior.parent_id=child.parent_id
-   AND prior.component_order=child.component_order-1 AND prior.status NOT IN ('succeeded','failed'))))
+   AND prior.component_order=child.component_order-1 AND prior.status NOT IN ('succeeded','failed'))))`
+
+const bulkChildReady = bulkPriorComponentsReady + `
  AND NOT EXISTS (SELECT 1 FROM unnest(child.dependency_ids) AS dependency(id)
   WHERE NOT EXISTS (SELECT 1 FROM scim.bulk_children AS predecessor WHERE predecessor.parent_id=child.parent_id
    AND predecessor.command_id=dependency.id AND predecessor.status='succeeded'))`
@@ -326,7 +332,7 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 		}
 	}
 	if status == "failed" && code != nil && resource == nil && version == nil {
-		if result, ok := bulkGroupFailureResult(phase.original.Operation, int(*code)); ok {
+		if result, ok := phase.failureResult(int(*code)); ok {
 			return result, false, nil
 		}
 	}
@@ -338,6 +344,13 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 		return scim.BulkChildResult{Status: scim.BulkChildSkipped, SkipReason: scim.BulkSkipFailOnErrors}, false, nil
 	}
 	return scim.BulkChildResult{}, false, identity.UnavailableError{}
+}
+
+func (p *bulkChildExecution) failureResult(code int) (scim.BulkChildResult, bool) {
+	if p.row.Cyclic && p.original.Operation == scim.GroupCreate && code == 424 {
+		return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true
+	}
+	return bulkGroupFailureResult(p.original.Operation, code)
 }
 
 func (p *bulkChildExecution) successfulResult(code int64, version *string) (scim.BulkChildResult, bool) {
@@ -369,7 +382,13 @@ func (p *nativePhase) applyBulkGroupChild(ctx context.Context, w kernel.Work) (i
 	// ApplyFeature already holds the current connection writer fence. Both
 	// child transitions join this same Work, so a failure cannot leave running
 	// status or acknowledge a projection without a result checkpoint.
-	count, err := w.Exec(ctx, bulkChildStart, phase.args()...)
+	var count int64
+	var err error
+	if phase.cycle != nil {
+		count, err = w.Exec(ctx, bulkCycleChildStart, append(phase.args(), phase.row.ComponentID)...)
+	} else {
+		count, err = w.Exec(ctx, bulkChildStart, phase.args()...)
+	}
 	if err != nil || count != 1 {
 		return identity.FeatureReceipt{}, identity.UnavailableError{}
 	}

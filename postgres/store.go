@@ -112,6 +112,9 @@ func (b *protocolBridge) Commit(ctx context.Context, prepared scim.PreparedWrite
 	if actual.CommandID != expected.CommandID || actual.Scope != expected.Scope || actual.Connection != expected.Connection || actual.Operation != expected.Operation || actual.ResourceID != expected.ResourceID || actual.IfMatch != expected.IfMatch || actual.IdempotencyKey != expected.IdempotencyKey || !bytes.Equal(actual.CanonicalRequest, expected.CanonicalRequest) || prepared.Replay != nil || !liveConnection(ctx, i.connection) {
 		return scim.WriteResult{}, identity.ForbiddenError{}
 	}
+	if ctx.Value(groupCyclePreparationKey{}) != nil && (!b.groups || actual.Operation != scim.GroupCreate) {
+		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, identity.ForbiddenError{}
+	}
 	if nativeDelete(actual.Operation) {
 		return b.commitDelete(ctx, p, prepared, change)
 	}
@@ -137,6 +140,14 @@ func (b *protocolBridge) Commit(ctx context.Context, prepared scim.PreparedWrite
 	}
 	if err := p.initialize(ctx, actual.CanonicalRequest); err != nil {
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, err
+	}
+	if value := ctx.Value(groupCyclePreparationKey{}); value != nil {
+		capture, ok := value.(*groupCyclePreparation)
+		if !ok || capture == nil || !b.groups || capture.phase != nil || !capture.matches(b.service, i, p) {
+			return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, identity.ForbiddenError{}
+		}
+		capture.phase = p
+		return scim.WriteResult{Outcome: scim.WriteOutcomeInProgress}, nil
 	}
 	return b.executeResourceWrite(ctx, p)
 }

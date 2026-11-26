@@ -75,11 +75,17 @@ do not count as failures; retry the same request and index to recover the
 checkpoint when it is known. Call `ReadResult` with the exact original request
 to read the complete response once all retained children have settled. The
 read neither admits requests nor attaches retry keys. `scim.ErrBulkIncomplete`
-means no terminal response is available; it returns no partial bytes. If an
+means no terminal response is available; it returns no partial bytes. Calling
+either member of a retained all-Group create cycle executes the whole cycle
+atomically. It resolves the original final IDs before writing and checks the
+within-cycle Group references before committing. A confirmed member denial
+records one 424 for every member and applies any cutoff only after counting the
+whole component. An uncertain database or commit acknowledgment returns no
+provisional result; retry the same request to read settled checkpoints. If an
 older native writer recorded a denial without settling its child checkpoint,
 retry that child with `ExecuteChild`. Reconciliation uses current authority
-and preserves the original denial and security audit. Other child kinds and
-cyclic execution remain open.
+and preserves the original denial and security audit. Other cyclic operations
+and mixed User/Group execution remain unsupported.
 
 ## Composition
 

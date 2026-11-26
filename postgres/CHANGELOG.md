@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Execute an all-Group create cycle atomically through an original child.
+  Replays retain all original successes or all protected dependency failures,
+  including audited skips once the parent reaches its error threshold.
+
 - Use the ordinary Group writer for acyclic Bulk replace, PATCH and delete.
   Retain encrypted original preparation, operation-specific replay, and the
   exact protected 404, 412 and 428 results. Install the additive Group Bulk

@@ -39,27 +39,56 @@ func (b *protocolBridge) SnapshotGroups(ctx context.Context, scope scim.Scope, b
 }
 
 func (p *nativePhase) requireGroupMembers(ctx context.Context, w kernel.Work) error {
+	exists, err := p.checkGroupMembers(ctx, w, false)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return w.DenyFeature(ctx, p, p.command, kernel.FeatureFailureInvalidGroupMember)
+	}
+	return nil
+}
+
+// checkGroupMembers normally checks all references. A Group cycle checks its
+// external members at apply and its exact in-component members after every
+// projection has been staged in the same root transaction.
+func (p *nativePhase) checkGroupMembers(ctx context.Context, w kernel.Work, deferredOnly bool) (bool, error) {
 	raw, ok := p.resource.Attributes["members"].([]any)
 	if !ok || len(raw) == 0 {
-		return nil
+		return true, nil
 	}
 	if len(raw) > scim.DefaultGroupMembers {
-		return identity.InvalidInputError{Field: "scim_group_members"}
+		return false, identity.InvalidInputError{Field: "scim_group_members"}
+	}
+	membersToCheck := raw
+	var deferred map[string]struct{}
+	if p.bulkChild != nil && p.bulkChild.cycle != nil {
+		deferred = p.bulkChild.cycle.deferredGroupIDs
+		membersToCheck = make([]any, 0, len(raw))
 	}
 	for _, item := range raw {
 		member, ok := item.(map[string]any)
 		if !ok {
-			return identity.InvalidInputError{Field: "scim_group_members"}
+			return false, identity.InvalidInputError{Field: "scim_group_members"}
 		}
 		id, _ := member["value"].(string)
 		kind, _ := member["type"].(string)
 		if id == "" || kind != "User" && kind != "Group" {
-			return identity.InvalidInputError{Field: "scim_group_members"}
+			return false, identity.InvalidInputError{Field: "scim_group_members"}
+		}
+		if deferred != nil {
+			_, sameCycle := deferred[id]
+			if (kind == "Group" && sameCycle) == deferredOnly {
+				membersToCheck = append(membersToCheck, item)
+			}
 		}
 	}
-	members, err := json.Marshal(raw)
+	if len(membersToCheck) == 0 {
+		return true, nil
+	}
+	members, err := json.Marshal(membersToCheck)
 	if err != nil || len(members) > 131072 {
-		return identity.InvalidInputError{Field: "scim_group_members"}
+		return false, identity.InvalidInputError{Field: "scim_group_members"}
 	}
 	defer clear(members)
 	// checkCurrent has locked this exact connection FOR UPDATE. All supported
@@ -71,18 +100,15 @@ func (p *nativePhase) requireGroupMembers(ctx context.Context, w kernel.Work) er
  WHERE (type='User' AND EXISTS(SELECT 1 FROM scim.users s WHERE s.tenant_id=$1 AND s.organization_id=$2 AND s.provider_id=$3 AND s.connection_id=$4 AND s.resource_id=requested.value AND s.deleted_at IS NULL))
  OR (type='Group' AND EXISTS(SELECT 1 FROM scim.groups s WHERE s.tenant_id=$1 AND s.organization_id=$2 AND s.provider_id=$3 AND s.connection_id=$4 AND s.resource_id=requested.value AND s.deleted_at IS NULL))`, append(scopeArgs(p.service.config().Scope), string(members))...)
 	if err != nil {
-		return identity.UnavailableError{}
+		return false, identity.UnavailableError{}
 	}
 	defer rows.Close()
 	var count int64
 	if !rows.Next() || rows.Scan(&count) != nil || rows.Next() || rows.Err() != nil {
-		return identity.UnavailableError{}
+		return false, identity.UnavailableError{}
 	}
 	rows.Close()
-	if count != int64(len(raw)) {
-		return w.DenyFeature(ctx, p, p.command, kernel.FeatureFailureInvalidGroupMember)
-	}
-	return nil
+	return count == int64(len(membersToCheck)), nil
 }
 
 func (p *nativePhase) applyGroupProjection(ctx context.Context, w kernel.Work) (identity.FeatureReceipt, error) {
