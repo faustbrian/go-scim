@@ -10,13 +10,14 @@ import (
 )
 
 type bulkChildExecution struct {
-	parent              identity.CommandID
-	row                 bulkChildRow
-	original            originalInput
-	ifMatch             scim.Version
-	acknowledgedFailure bool
-	cycle               *groupCreateCycleMember
-	structuralAuthority bulkChildAuthority
+	parent                identity.CommandID
+	row                   bulkChildRow
+	original              originalInput
+	ifMatch               scim.Version
+	acknowledgedFailure   bool
+	cycle                 *groupCreateCycleMember
+	structuralAuthority   bulkChildAuthority
+	retainTypedValidation bool
 }
 
 const bulkInvalidChild scim.Operation = "identity.scim.bulk-child-invalid"
@@ -128,6 +129,7 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 	if !structural {
 		phase = newBulkChildExecution(parent.original, selected, operation, target, scim.Version(child.Version))
 	}
+	phase.retainTypedValidation = parent.bulk.retainTypedValidation
 	checkpoint, ready, err := s.native.readBulkChild(ctx, phase)
 	if err != nil {
 		return result, err
@@ -212,20 +214,27 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 			p := i.phase
 			switch protocol.StatusCode() {
 			case 400:
-				if p == nil && operation == scim.GroupCreate && protocol.SCIMType() == "invalidValue" {
-					// The selected resource protocol rejected the exact resolved
-					// child before Prepare. Only this finite type is retained;
-					// do not relabel other 400s or a started attempt.
+				if i.prepareStarted || p != nil {
+					break
+				}
+				kind := protocol.SCIMType()
+				code = phase.validationFailure(kind)
+				canonical := "identity.scim.bulk.pre-prepare.v1:" + kind
+				if operation == scim.GroupCreate && kind == "invalidValue" {
+					// Preserve the already-published command fingerprint and code.
+					canonical = "identity.scim.bulk.group-create-invalid-value.v1"
+					code = kernel.FeatureFailureGroupCreateInvalidValue
+				}
+				if code != 0 {
 					p = &nativePhase{service: s.native, bulkChild: phase, admission: i, original: phase.original, intent: scim.WriteIntent{
-						Operation: operation, Scope: i.connection.Scope,
-						CanonicalRequest: []byte("identity.scim.bulk.group-create-invalid-value.v1"),
+						Operation: operation, Scope: i.connection.Scope, ResourceID: target, IfMatch: phase.ifMatch,
+						CanonicalRequest: []byte(canonical),
 					}}
 					coordinator, registry, setupErr := s.native.coordinator(p)
 					if setupErr != nil {
 						return result, setupErr
 					}
 					p.coordinator, p.registry = coordinator, registry
-					code = kernel.FeatureFailureGroupCreateInvalidValue
 				}
 			case 404:
 				if nativeMutation(operation) && p != nil {
@@ -303,6 +312,9 @@ func (p *nativePhase) hasStaleBulkPrecondition() bool {
 }
 
 func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
+	if _, ok := bulkValidationKind(p.intent.Operation, code); ok {
+		return p.typedValidationMatches(code)
+	}
 	if code == kernel.FeatureFailureBulkChildInvalid {
 		child := p.bulkChild
 		return child != nil && child.validStructuralRow() &&
@@ -482,11 +494,15 @@ const bulkChildReady = bulkPriorComponentsReady + `
   WHERE NOT EXISTS (SELECT 1 FROM scim.bulk_children AS predecessor WHERE predecessor.parent_id=child.parent_id
    AND predecessor.command_id=dependency.id AND predecessor.status='succeeded'))`
 
-const bulkChildCheckpointRead = `SELECT child.status, child.result_code, child.result_resource_id, child.result_version,
- (NOT child.cyclic AND ` + bulkChildReady + `)
+const bulkChildCheckpointProjection = `SELECT child.status, child.result_code, child.result_resource_id, child.result_version,
+ (NOT child.cyclic AND ` + bulkChildReady + `)`
+const bulkChildCheckpointFilter = `
 FROM scim.bulk_children child JOIN scim.bulk_requests parent ON parent.parent_id=child.parent_id
 WHERE child.parent_id=$1 AND child.ordinal=$2 AND child.command_id=$3 AND child.request_fingerprint=$4
  AND child.resource_id=$5 AND child.component_order=$6`
+
+const bulkChildCheckpointRead = bulkChildCheckpointProjection + bulkChildCheckpointFilter
+const bulkTypedChildCheckpointRead = bulkChildCheckpointProjection + `,child.result_denial_code` + bulkChildCheckpointFilter
 
 const bulkChildStart = `UPDATE scim.bulk_children AS child SET status='running'
 FROM scim.bulk_requests AS parent
@@ -508,18 +524,36 @@ func (p *bulkChildExecution) args() []any {
 }
 
 func (s *Service) readBulkChild(ctx context.Context, phase *bulkChildExecution) (scim.BulkChildResult, bool, error) {
-	var status string
-	var code *int64
-	var resource, version *string
-	var ready bool
-	err := s.pool.Raw().QueryRow(ctx, bulkChildCheckpointRead, phase.args()...).Scan(&status, &code, &resource, &version, &ready)
+	var row bulkChildCheckpoint
+	query, destinations := row.selectFor(phase)
+	err := s.pool.Raw().QueryRow(ctx, query, phase.args()...).Scan(destinations...)
 	if err != nil {
 		return scim.BulkChildResult{}, false, identity.UnavailableError{}
 	}
-	return decodeBulkChildCheckpoint(phase, status, code, resource, version, ready)
+	return row.decode(phase)
 }
 
-func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *int64, resource, version *string, ready bool) (scim.BulkChildResult, bool, error) {
+type bulkChildCheckpoint struct {
+	status            string
+	code, denial      *int64
+	resource, version *string
+	ready             bool
+}
+
+func (r *bulkChildCheckpoint) selectFor(phase *bulkChildExecution) (string, []any) {
+	destinations := []any{&r.status, &r.code, &r.resource, &r.version, &r.ready}
+	if phase.retainTypedValidation {
+		return bulkTypedChildCheckpointRead, append(destinations, &r.denial)
+	}
+	return bulkChildCheckpointRead, destinations
+}
+
+func (r bulkChildCheckpoint) decode(phase *bulkChildExecution) (scim.BulkChildResult, bool, error) {
+	status, code, resource, version, ready := r.status, r.code, r.resource, r.version, r.ready
+	if r.denial != nil {
+		result, err := phase.retainedTypedValidation(status, code, resource, version, *r.denial)
+		return result, false, err
+	}
 	if status == "succeeded" && code != nil && resource != nil && *resource == phase.original.ID {
 		if result, ok := phase.successfulResult(*code, version); ok {
 			return result, false, nil

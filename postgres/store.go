@@ -13,6 +13,11 @@ import (
 
 func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (scim.PreparedWrite, error) {
 	i, err := currentInvocation(ctx)
+	if i != nil && i.bulkChild != nil {
+		// A Prepare failure is not a resource protocol validation result, even
+		// if it fails before a native phase can be installed on this invocation.
+		i.prepareStarted = true
+	}
 	if err != nil || intent.Scope != i.connection.Scope || intent.Connection != i.connection || len(intent.CanonicalRequest) == 0 || !liveConnection(ctx, i.connection) {
 		return scim.PreparedWrite{}, identity.ForbiddenError{}
 	}

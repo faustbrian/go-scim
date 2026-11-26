@@ -14,13 +14,14 @@ import (
 )
 
 type bulkAdmissionPhase struct {
-	children          []scim.BulkOperation
-	components        []scim.BulkComponent
-	cutoff, maximum   int
-	profile           [32]byte
-	intent            [32]byte
-	allocation        []bulkAllocation
-	preparationSchema uint8
+	children              []scim.BulkOperation
+	components            []scim.BulkComponent
+	cutoff, maximum       int
+	profile               [32]byte
+	intent                [32]byte
+	allocation            []bulkAllocation
+	preparationSchema     uint8
+	retainTypedValidation bool
 }
 
 type bulkAllocation struct {

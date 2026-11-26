@@ -24,12 +24,13 @@ type invocationKey struct{}
 // callbacks; it is neither a positive cache nor a transferable proof. Execute
 // and the synchronous protocol use it serially. No shared map or mutex exists.
 type invocation struct {
-	connection   scim.Connection
-	organization organization.CredentialAuthorityObservation
-	epoch        uint64
-	directory    kernel.DirectoryAuthorityAdmission
-	phase        *nativePhase
-	bulkChild    *bulkChildExecution
+	connection     scim.Connection
+	organization   organization.CredentialAuthorityObservation
+	epoch          uint64
+	directory      kernel.DirectoryAuthorityAdmission
+	phase          *nativePhase
+	bulkChild      *bulkChildExecution
+	prepareStarted bool
 }
 
 type protocolBridge struct {

@@ -11,8 +11,9 @@ import (
 
 var _ kernel.SCIMBulkChildReconciler = (*nativePhase)(nil)
 
-const bulkChildFail = `WITH failed AS (
- UPDATE scim.bulk_children AS child SET status='failed',result_code=$7
+const bulkChildFailureUpdate = `WITH failed AS (
+ UPDATE scim.bulk_children AS child SET status='failed',result_code=$7`
+const bulkChildFailureFence = `
  FROM scim.bulk_requests AS parent
  WHERE parent.parent_id=child.parent_id AND child.parent_id=$1 AND child.ordinal=$2
   AND child.command_id=$3 AND child.request_fingerprint=$4 AND child.resource_id=$5
@@ -24,6 +25,12 @@ UPDATE scim.bulk_requests AS parent SET failed_count=failed_count+1,
  cutoff_active=(parent.fail_on_errors>0 AND parent.failed_count+1>=parent.fail_on_errors)
 FROM failed WHERE parent.parent_id=failed.parent_id
 RETURNING parent.cutoff_active`
+
+const bulkChildFail = bulkChildFailureUpdate + bulkChildFailureFence
+
+// Keep the original target with explicitly typed denials. Legacy readers
+// reject failed rows with a result target instead of silently relabeling them.
+const bulkTypedChildFail = bulkChildFailureUpdate + `,result_denial_code=$8,result_resource_id=$9` + bulkChildFailureFence
 
 // Return only server-owned identity metadata. One bounded aggregate is needed
 // because a parent may have 999 skipped siblings but Work limits returned rows.
@@ -47,6 +54,7 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 		return identity.ForbiddenError{}
 	}
 	var status int
+	var validation kernel.FeatureFailureCode
 	switch failure {
 	case kernel.FeatureFailureSCIMBulkDependency:
 		if p.denialOnly != failure || !p.bulkDenialMatches(failure) {
@@ -55,6 +63,12 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 		return p.recordBulkDependencyFailure(ctx, w)
 	case kernel.FeatureFailureInvalidGroupMember:
 		status = 400
+	case kernel.FeatureFailureSCIMBulkInvalidValue, kernel.FeatureFailureSCIMBulkMutability,
+		kernel.FeatureFailureSCIMBulkInvalidSyntax, kernel.FeatureFailureSCIMBulkInvalidPath, kernel.FeatureFailureSCIMBulkUntypedBadRequest:
+		if p.denialOnly != failure || !p.typedValidationMatches(failure) {
+			return identity.ForbiddenError{}
+		}
+		status, validation = 400, failure
 	case kernel.FeatureFailureGroupCreateInvalidValue, kernel.FeatureFailureBulkChildInvalid:
 		if p.denialOnly != failure || !p.bulkDenialMatches(failure) {
 			return identity.ForbiddenError{}
@@ -93,7 +107,7 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 	if err := p.checkCurrent(ctx, w); err != nil {
 		return err
 	}
-	cutoff, err := p.projectBulkChildFailure(ctx, w, status)
+	cutoff, err := p.projectBulkChildResultFailure(ctx, w, status, validation)
 	if err != nil {
 		return err
 	}
@@ -159,8 +173,16 @@ func (p *nativePhase) ReconcileSCIMBulkChildFailure(ctx context.Context, w kerne
 }
 
 func (p *nativePhase) projectBulkChildFailure(ctx context.Context, w kernel.Work, status int) (bool, error) {
+	return p.projectBulkChildResultFailure(ctx, w, status, 0)
+}
+
+func (p *nativePhase) projectBulkChildResultFailure(ctx context.Context, w kernel.Work, status int, validation kernel.FeatureFailureCode) (bool, error) {
 	var cutoff bool
-	if err := readBulkFailureCheckpoint(ctx, w, bulkChildFail, &cutoff, append(p.bulkChild.args(), status)...); err != nil {
+	query, args := bulkChildFail, append(p.bulkChild.args(), status)
+	if validation != 0 {
+		query, args = bulkTypedChildFail, append(args, int(validation), p.original.ID)
+	}
+	if err := readBulkFailureCheckpoint(ctx, w, query, &cutoff, args...); err != nil {
 		return false, err
 	}
 	if !cutoff {
@@ -217,20 +239,17 @@ func (p *nativePhase) checkAcyclicBulkChildScope(w kernel.Work) error {
 }
 
 func (p *nativePhase) readBulkChildCheckpoint(ctx context.Context, w kernel.Work) (scim.BulkChildResult, bool, error) {
-	rows, err := w.Query(ctx, bulkChildCheckpointRead, p.bulkChild.args()...)
+	var row bulkChildCheckpoint
+	query, destinations := row.selectFor(p.bulkChild)
+	rows, err := w.Query(ctx, query, p.bulkChild.args()...)
 	if err != nil {
 		return scim.BulkChildResult{}, false, identity.UnavailableError{}
 	}
 	defer rows.Close()
-	var status string
-	// The Work scanner allows a nullable integer only at int64 width.
-	var code *int64
-	var resource, version *string
-	var ready bool
-	if !rows.Next() || rows.Scan(&status, &code, &resource, &version, &ready) != nil || rows.Next() || rows.Err() != nil {
+	if !rows.Next() || rows.Scan(destinations...) != nil || rows.Next() || rows.Err() != nil {
 		return scim.BulkChildResult{}, false, identity.UnavailableError{}
 	}
-	return decodeBulkChildCheckpoint(p.bulkChild, status, code, resource, version, ready)
+	return row.decode(p.bulkChild)
 }
 
 func readBulkFailureCheckpoint(ctx context.Context, w kernel.Work, statement string, out any, args ...any) error {

@@ -26,6 +26,16 @@ func NewBulkService(groups *GroupsService, request scim.BulkPolicy, response sci
 	return &BulkService{graph: graph}, nil
 }
 
+// WithTypedValidation returns a copy that retains exact resource protocol
+// validation denials. See GroupBulkService.WithTypedValidation for schema and
+// shared-connection rollout requirements.
+func (s *BulkService) WithTypedValidation() *BulkService {
+	if s == nil {
+		return nil
+	}
+	return &BulkService{graph: s.graph.WithTypedValidation()}
+}
+
 func (s *BulkService) executor() *GroupBulkService {
 	if s == nil {
 		return nil

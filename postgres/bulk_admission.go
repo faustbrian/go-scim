@@ -18,12 +18,27 @@ import (
 // Group projection. It does not enable discovery or an HTTP route.
 // Its pool and authority remain borrowed from the ordinary Group service.
 type GroupBulkService struct {
-	native     *Service
-	groups     *scim.GroupsService
-	request    scim.BulkPolicy
-	response   scim.BulkResponsePolicy
-	profile    [32]byte
-	allowUsers bool
+	native                *Service
+	groups                *scim.GroupsService
+	request               scim.BulkPolicy
+	response              scim.BulkResponsePolicy
+	profile               [32]byte
+	allowUsers            bool
+	retainTypedValidation bool
+}
+
+// WithTypedValidation returns a copy that retains exact pre-Prepare 400
+// results for acyclic resource operations. Apply the schema expansion first
+// and select this profile on every reader sharing the connection
+// before relying on delivery of its new typed results. Original admission
+// identities and previously retained results are unchanged.
+func (s *GroupBulkService) WithTypedValidation() *GroupBulkService {
+	if s == nil {
+		return nil
+	}
+	configured := *s
+	configured.retainTypedValidation = true
+	return &configured
 }
 
 // NewGroupBulkService performs no I/O. Install BulkAdmissionMigrationSource
@@ -187,6 +202,7 @@ func (s *GroupBulkService) prepareBulkGraph(ctx context.Context, request BulkAdm
 	}
 	p := &nativePhase{service: s.native, admission: *i, bulk: &bulkAdmissionPhase{
 		children: children, components: components, cutoff: plan.FailOnErrors(), maximum: response.MaximumBytes(), profile: s.profile,
+		retainTypedValidation: s.retainTypedValidation,
 	}}
 	return preparedBulkGraph{phase: p, plan: plan, response: response}, nil
 }

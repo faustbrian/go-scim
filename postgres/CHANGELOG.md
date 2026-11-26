@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an opt-in Bulk profile that retains exact resource validation results
+  emitted before Prepare, with audited cutoff and identical replay.
+
 - Wait for the admitted target of a symbolic User or Group mutation with
   structural `invalidValue`. Retain dependency failures or audited cutoff
   skips before structural denial, and authorize the resolved Location.

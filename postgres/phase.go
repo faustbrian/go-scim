@@ -195,7 +195,7 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 			}
 			fields = append(fields, updateFields...)
 		}
-	} else if !p.bootstrap && !p.group() && p.intent.Operation != bulkInvalidChild {
+	} else if p.denialOnly == 0 && !p.bootstrap && !p.group() && p.intent.Operation != bulkInvalidChild {
 		creationBinding := b
 		creationBinding.OperationID = "identity.user.create"
 		creationBinding.SchemaID = c.FieldSchema.ID

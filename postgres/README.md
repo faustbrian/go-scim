@@ -82,6 +82,16 @@ failure. An exact retry of an aborted child reads its terminal result instead
 of repeating the write. A dependent child retains `424` only after its
 dependency is confirmed to have failed.
 
+To retain the exact `scimType` of acyclic resource validation errors emitted
+as `400` before Prepare, apply `BulkTypedValidationMigrationSource`'s expansion and
+then use `service.WithTypedValidation()` on the connection's Group-only or
+mixed Bulk service. Apply the constraint validation in a later migration;
+there is no backfill. Upgrade every process that executes or reads this
+connection's Bulk results before relying on typed results. Older readers
+continue to read existing results, but return `503` rather than mislabel a
+new typed result. The opt-in does not change admitted command identities,
+enable HTTP or discovery, or expose a failed creation's reserved identifier.
+
 Install `BulkChildExecutionMigrationSource` to call `ExecuteChild` with the
 exact original request and a zero-based operation index. This selection runs
 acyclic Group children in the retained dependency order. Install the further

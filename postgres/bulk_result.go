@@ -103,12 +103,15 @@ func (s *GroupBulkService) writeBulkResult(ctx context.Context, prepared prepare
 // A single read observes both the committed parent and its complete ordered
 // checkpoint set, so a concurrent cutoff cannot produce a mixed response.
 // One extra row distinguishes an invalid graph from the expected bounded set.
-const bulkTerminalCheckpoints = `WITH parent AS (
+const bulkTerminalCheckpointProjection = `WITH parent AS (
  SELECT parent_id,failed_count,cutoff_active FROM scim.bulk_requests WHERE ` + bulkParentMatch + `
 )
 SELECT child.ordinal,child.command_id,child.request_fingerprint,child.resource_id,child.component_order,child.cyclic,
- child.status,child.skip_reason,child.result_code,child.result_resource_id,child.result_version,parent.failed_count,parent.cutoff_active
+ child.status,child.skip_reason,child.result_code,child.result_resource_id,child.result_version,parent.failed_count,parent.cutoff_active`
+const bulkTerminalCheckpointFilter = `
 FROM parent JOIN scim.bulk_children child USING(parent_id) ORDER BY child.ordinal LIMIT ($9::integer+1)`
+const bulkTerminalCheckpoints = bulkTerminalCheckpointProjection + bulkTerminalCheckpointFilter
+const bulkTypedTerminalCheckpoints = bulkTerminalCheckpointProjection + `,child.result_denial_code` + bulkTerminalCheckpointFilter
 
 // An incomplete graph returns its validated internal checkpoints so execution
 // can resume without spending its bounded call on completed components. The
@@ -118,7 +121,11 @@ func (p *nativePhase) readBulkCheckpoints(ctx context.Context) ([]scim.BulkChild
 	if err != nil {
 		return nil, err
 	}
-	rows, err := p.service.pool.Raw().Query(ctx, bulkTerminalCheckpoints, p.bulkParentArgs()...)
+	query := bulkTerminalCheckpoints
+	if p.bulk.retainTypedValidation {
+		query = bulkTypedTerminalCheckpoints
+	}
+	rows, err := p.service.pool.Raw().Query(ctx, query, p.bulkParentArgs()...)
 	if err != nil {
 		return nil, identity.UnavailableError{}
 	}
@@ -133,8 +140,12 @@ func (p *nativePhase) readBulkCheckpoints(ctx context.Context) ([]scim.BulkChild
 			return nil, identity.UnavailableError{}
 		}
 		var r bulkTerminalCheckpoint
-		if err := rows.Scan(&r.ordinal, &r.command, &r.fingerprint, &r.allocation, &r.componentOrder, &r.cyclic,
-			&r.status, &r.skipReason, &r.code, &r.resource, &r.version, &retainedFailures, &cutoff); err != nil {
+		destinations := []any{&r.ordinal, &r.command, &r.fingerprint, &r.allocation, &r.componentOrder, &r.cyclic,
+			&r.status, &r.skipReason, &r.code, &r.resource, &r.version, &retainedFailures, &cutoff}
+		if p.bulk.retainTypedValidation {
+			destinations = append(destinations, &r.denial)
+		}
+		if err := rows.Scan(destinations...); err != nil {
 			return nil, identity.UnavailableError{}
 		}
 		original := expected[index]
@@ -151,6 +162,7 @@ func (p *nativePhase) readBulkCheckpoints(ctx context.Context) ([]scim.BulkChild
 		if phase == nil {
 			phase = newBulkChildExecution(p.original, original, op, target, scim.Version(child.Version))
 		}
+		phase.retainTypedValidation = p.bulk.retainTypedValidation
 		result, err := r.result(phase, cutoff)
 		if err != nil && !errors.Is(err, scim.ErrBulkIncomplete) {
 			return nil, err
@@ -182,11 +194,17 @@ type bulkTerminalCheckpoint struct {
 	fingerprint             []byte
 	cyclic                  bool
 	status, skipReason      string
-	code                    *int16
+	code, denial            *int64
 	resource, version       *string
 }
 
 func (r bulkTerminalCheckpoint) result(phase *bulkChildExecution, cutoff bool) (scim.BulkChildResult, error) {
+	if r.denial != nil {
+		if r.skipReason != "none" {
+			return scim.BulkChildResult{}, identity.UnavailableError{}
+		}
+		return phase.retainedTypedValidation(r.status, r.code, r.resource, r.version, *r.denial)
+	}
 	empty := r.code == nil && r.resource == nil && r.version == nil
 	if r.status == "skipped" {
 		if empty && cutoff && r.skipReason == "fail-on-errors" {
