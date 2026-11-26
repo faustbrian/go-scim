@@ -52,13 +52,21 @@ and Groups, HTTP routing and discovery still do not enable Bulk.
 
 Install `BulkChildExecutionMigrationSource` to call `ExecuteChild` with the
 exact original request and a zero-based operation index. This selection runs
-acyclic Group creates in the retained order. The usual Groups schema and
-permission rules apply. An unstarted child requires the parent's original
-authority to remain live; retry does not renew it. A create's projection,
-original kernel journal, outbox, protected `identity.scim.bulk_apply_child`
-audit and result checkpoint commit together. Replay returns the original 201
-identity/version to a currently authorized caller, even if the projection
-later changes. A definitive native create denial records the original result
+acyclic Group children in the retained dependency order. Install the further
+`BulkGroupMutationMigrationSource` before sending Group replace, PATCH or
+delete children; existing creates need no backfill. The usual Groups schema,
+exact `If-Match` and permission rules apply. An unstarted child requires the
+parent's original authority to remain live; retry does not renew it. The
+replacement, PATCH or deletion uses its first encrypted Group snapshot even
+if another writer later changes the Group. Projection, original kernel
+journal, outbox, protected `identity.scim.bulk_apply_child` audit and result
+checkpoint commit together. Replay returns the original 201 or 200 and ETag,
+or the empty-version 204 for delete, to a caller currently authorized for the
+exact operation and target. A no-op PATCH retains its original ETag. A stale
+version denial records the original 412 even when the Group had already
+changed before snapshot preparation. A missing target records 404; an omitted
+`If-Match` records 428 without reading a Group projection. A definitive
+protected denial records its result
 and counts once, without a Group projection or success outbox event. At a
 positive `failOnErrors` threshold, the failure transaction also skips every
 remaining admitted child and appends one protected audit per skip. A skipped

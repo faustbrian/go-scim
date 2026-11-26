@@ -3,13 +3,17 @@
 package scimpostgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	identity "github.com/faustbrian/go-identity"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // Synthetic retained rows isolate the owner's exact predicates and index work;
@@ -17,6 +21,7 @@ import (
 // Ten populated parents each retain the maximum 1,000 singleton components.
 func TestNativeGroupBulkChildBoundedCheckpointQueryPlans(t *testing.T) {
 	f, service := bulkChildExecutionFixture(t)
+	installBulkGroupMutationSchema(t, f)
 	parent, err := service.Admit(f.ctx, BulkAdmissionRequest{Credential: f.bearer, Body: []byte(dependentGroupBulkFixture)})
 	if err != nil {
 		t.Fatal("admit native parent before seeding retained history", err)
@@ -198,10 +203,277 @@ func TestNativeGroupBulkChildBoundedCheckpointQueryPlans(t *testing.T) {
 			t.Logf("checkpoint read client samples=%v; instrumented Work reconciliation read=%v; instrumented Work start=%v; instrumented Work success=%v; each transaction rolled back", readElapsed, reconciliationElapsed, startElapsed, successElapsed)
 		})
 	}
-	var succeeded, groups int
-	if err := connection.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM scim.bulk_children WHERE status='succeeded'),(SELECT count(*) FROM scim.groups)`).Scan(&succeeded, &groups); err != nil || succeeded != 10000 || groups != 0 {
-		t.Fatal("measurement escaped rollback or changed Group projections", succeeded, groups, err)
+	t.Run("Group mutation input and success", func(t *testing.T) {
+		measureBulkGroupMutationQueries(t, f.ctx, connection.Conn())
+	})
+	var succeeded, groups, retainedInputs int
+	if err := connection.QueryRow(f.ctx, `SELECT (SELECT count(*) FROM scim.bulk_children WHERE status='succeeded'),
+ (SELECT count(*) FROM scim.groups),(SELECT count(*) FROM scim.bulk_children WHERE group_mutation_input IS NOT NULL)`).Scan(&succeeded, &groups, &retainedInputs); err != nil || succeeded != 10000 || groups != 0 || retainedInputs != 0 {
+		t.Fatal("measurement escaped rollback or changed Group projections", succeeded, groups, retainedInputs, err)
 	}
+}
+
+func measureBulkGroupMutationQueries(t *testing.T, ctx context.Context, connection *pgx.Conn) {
+	t.Helper()
+	readDescription, err := connection.Prepare(ctx, "bulk-mutation-input-read-plan", readBulkMutationInput)
+	if err != nil {
+		t.Fatal("prepare production mutation input read", err)
+	}
+	retainDescription, err := connection.Prepare(ctx, "bulk-mutation-input-retain-plan", retainBulkMutationInput)
+	if err != nil {
+		t.Fatal("prepare production mutation input retention", err)
+	}
+	t.Logf("mutation input read SQL=%s; actual pgx parameter OIDs=%v; Go binding types=string,int,string,[]byte,string,int", readBulkMutationInput, readDescription.ParamOIDs)
+	t.Logf("mutation input retention SQL=%s; actual pgx parameter OIDs=%v; Go binding types=string,int,string,[]byte,string,int,[]byte,time.Time", retainBulkMutationInput, retainDescription.ParamOIDs)
+	successOIDs := []uint32{25, 20, 25, 17, 25, 20, 20, 25, 25}
+	t.Logf("mutation success SQL=%s; Work binary parameter OIDs=%v", bulkGroupMutationSucceed, successOIDs)
+
+	// Use the real encrypted representation, not compressible zero padding, so
+	// returning and writing the pre-image exercise PostgreSQL's bytea/TOAST work.
+	codec, input, originalParent := bulkMutationInputCodec(t)
+	input.Current.Attributes["displayName"] = strings.Repeat("group projection ", 4096)
+	ciphertext, err := codec.sealBulkMutationInput(ctx, input, originalParent)
+	if err != nil || len(ciphertext) < 64*1024 {
+		t.Fatal("seal representative enlarged Group pre-image", err)
+	}
+	defer clear(ciphertext)
+	t.Logf("synthetic sealed Group pre-image bytes=%d; same 10000-child history and 1000-child graph; 3 warm sequential samples; no concurrent writer", len(ciphertext))
+	childArgs := func(ordinal int) []any {
+		var parent, command, resource string
+		var fingerprint []byte
+		var component int
+		if err := connection.QueryRow(ctx, `SELECT parent_id,command_id,request_fingerprint,resource_id,component_order
+ FROM scim.bulk_children WHERE parent_id=translate(rtrim(encode(decode(md5('bulk-child-plan-parent-1'),'hex'),'base64'),'='),'+/','-_')
+ AND ordinal=$1`, ordinal).Scan(&parent, &command, &fingerprint, &resource, &component); err != nil {
+			t.Fatal("select actual mutation checkpoint bindings", err)
+		}
+		return []any{parent, ordinal, command, fingerprint, resource, component}
+	}
+	for _, test := range []struct {
+		name     string
+		retained bool
+		missing  bool
+	}{
+		{name: "unprepared read"},
+		{name: "retained enlarged input read", retained: true},
+		{name: "binding miss read", retained: true, missing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := childArgs(999)
+			returned := 1
+			if test.missing {
+				returned = 0
+			}
+			var elapsed [3]time.Duration
+			for sample := range elapsed {
+				withBulkMutationPlanTransaction(t, ctx, connection, func(tx pgx.Tx) {
+					if test.retained {
+						if _, err := tx.Exec(ctx, `UPDATE scim.bulk_children SET group_mutation_input=$3 WHERE parent_id=$1 AND ordinal=$2`, args[0], args[1], ciphertext); err != nil {
+							t.Fatal(err)
+						}
+					}
+					queryArgs := append([]any(nil), args...)
+					if test.missing {
+						queryArgs[2] = "another-command"
+					}
+					var retained []byte
+					started := time.Now()
+					err := tx.QueryRow(ctx, "bulk-mutation-input-read-plan", queryArgs...).Scan(&retained)
+					elapsed[sample] = time.Since(started)
+					defer clear(retained)
+					if test.missing {
+						if !errors.Is(err, pgx.ErrNoRows) {
+							t.Fatal("binding miss returned a retained input", err)
+						}
+					} else if err != nil || test.retained && !bytes.Equal(retained, ciphertext) || !test.retained && retained != nil {
+						t.Fatal("mutation read changed the exact retained input", err)
+					}
+					if sample == 0 {
+						var wire []byte
+						if err := tx.QueryRow(ctx, `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) `+readBulkMutationInput, queryArgs...).Scan(&wire); err != nil {
+							t.Fatal("measure exact mutation read", err)
+						}
+						requireBoundedBulkChildQueryPlan(t, parseBulkQueryPlan(t, wire).sanitized(t))
+					}
+				})
+			}
+			t.Logf("mutation read client samples=%v; returned rows=%d; each transaction rolled back", elapsed, returned)
+		})
+	}
+	for _, test := range []struct {
+		name     string
+		ordinal  int
+		blocked  bool
+		retained bool
+		expired  bool
+	}{
+		{name: "first input ready", ordinal: 0},
+		{name: "late input ready", ordinal: 999},
+		{name: "late input blocked", ordinal: 999, blocked: true},
+		{name: "input already retained", ordinal: 999, retained: true},
+		{name: "input admission expired", ordinal: 999, expired: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			args := childArgs(test.ordinal)
+			var elapsed [3]time.Duration
+			for sample := range elapsed {
+				withBulkMutationPlanTransaction(t, ctx, connection, func(tx pgx.Tx) {
+					if _, err := tx.Exec(ctx, `UPDATE scim.bulk_children SET status='admitted',result_code=NULL,result_resource_id=NULL,result_version=NULL WHERE parent_id=$1 AND ordinal=$2`, args[0], args[1]); err != nil {
+						t.Fatal(err)
+					}
+					if test.blocked {
+						if _, err := tx.Exec(ctx, `UPDATE scim.bulk_children SET status='admitted',result_code=NULL,result_resource_id=NULL,result_version=NULL WHERE parent_id=$1 AND ordinal=998`, args[0]); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if test.retained {
+						if _, err := tx.Exec(ctx, `UPDATE scim.bulk_children SET group_mutation_input=$3 WHERE parent_id=$1 AND ordinal=$2`, args[0], args[1], ciphertext); err != nil {
+							t.Fatal(err)
+						}
+					}
+					deadline := time.Now().UTC().Add(time.Hour)
+					if test.expired {
+						deadline = time.Now().UTC().Add(-time.Hour)
+					}
+					retainArgs := append(append([]any(nil), args...), ciphertext, deadline)
+					if sample == 0 {
+						if _, err := tx.Exec(ctx, "SAVEPOINT mutation_retention_plan"); err != nil {
+							t.Fatal(err)
+						}
+						var wire []byte
+						if err := tx.QueryRow(ctx, `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) `+retainBulkMutationInput, retainArgs...).Scan(&wire); err != nil {
+							t.Fatal("measure exact mutation retention", err)
+						}
+						requireBoundedBulkChildQueryPlan(t, parseBulkQueryPlan(t, wire).sanitized(t))
+						if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT mutation_retention_plan"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					started := time.Now()
+					result, err := tx.Exec(ctx, "bulk-mutation-input-retain-plan", retainArgs...)
+					elapsed[sample] = time.Since(started)
+					wantRows := int64(1)
+					if test.blocked || test.retained || test.expired {
+						wantRows = 0
+					}
+					if err != nil || result.RowsAffected() != wantRows {
+						t.Fatal("retention did not update exactly one eligible child", result.RowsAffected(), wantRows, err)
+					}
+					var retained []byte
+					if err := tx.QueryRow(ctx, "bulk-mutation-input-read-plan", args...).Scan(&retained); err != nil {
+						t.Fatal(err)
+					}
+					defer clear(retained)
+					if wantRows == 1 || test.retained {
+						if !bytes.Equal(retained, ciphertext) {
+							t.Fatal("retention changed the exact encrypted pre-image")
+						}
+					} else if retained != nil {
+						t.Fatal("blocked retention acquired input")
+					}
+				})
+			}
+			t.Logf("mutation retention client samples=%v; each transaction rolled back", elapsed)
+		})
+	}
+	measureBulkGroupMutationSuccess(t, ctx, connection, childArgs(999), ciphertext, successOIDs)
+}
+
+func measureBulkGroupMutationSuccess(t *testing.T, ctx context.Context, connection *pgx.Conn, args []any, ciphertext []byte, oids []uint32) {
+	t.Helper()
+	for _, test := range []struct {
+		name     string
+		status   string
+		retained bool
+		code     int
+		version  string
+	}{
+		{name: "replace or patch success", status: "running", retained: true, code: 200, version: `"original-child-version"`},
+		{name: "delete success", status: "running", retained: true, code: 204},
+		{name: "unstarted success blocked", status: "admitted", retained: true, code: 200, version: `"original-child-version"`},
+		{name: "unprepared success blocked", status: "running", code: 200, version: `"original-child-version"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var elapsed [3]time.Duration
+			for sample := range elapsed {
+				withBulkMutationPlanTransaction(t, ctx, connection, func(tx pgx.Tx) {
+					var retained []byte
+					if test.retained {
+						retained = ciphertext
+					}
+					if _, err := tx.Exec(ctx, `UPDATE scim.bulk_children SET status=$3,result_code=NULL,result_resource_id=NULL,result_version=NULL,group_mutation_input=$4 WHERE parent_id=$1 AND ordinal=$2`, args[0], args[1], test.status, retained); err != nil {
+						t.Fatal(err)
+					}
+					successArgs := append(append([]any(nil), args...), test.code, args[4], test.version)
+					if sample == 0 {
+						if _, err := tx.Exec(ctx, "SAVEPOINT mutation_success_plan"); err != nil {
+							t.Fatal(err)
+						}
+						requireBoundedBulkChildQueryPlan(t, explainBulkWorkInsert(t, ctx, tx, bulkGroupMutationSucceed, oids, successArgs))
+						if _, err := tx.Exec(ctx, "ROLLBACK TO SAVEPOINT mutation_success_plan"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					values, formats := make([][]byte, len(successArgs)), make([]int16, len(successArgs))
+					for index, value := range successArgs {
+						if number, ok := value.(int); ok {
+							value = int64(number)
+						}
+						formats[index] = pgtype.BinaryFormatCode
+						var err error
+						values[index], err = tx.Conn().TypeMap().Encode(oids[index], formats[index], value, nil)
+						if err != nil {
+							t.Fatal("encode Work mutation success binding", index, err)
+						}
+					}
+					started := time.Now()
+					result := tx.Conn().PgConn().ExecParams(ctx, bulkGroupMutationSucceed, values, oids, formats, nil).Read()
+					elapsed[sample] = time.Since(started)
+					wantRows := int64(0)
+					if test.status == "running" && test.retained {
+						wantRows = 1
+					}
+					if result.Err != nil || result.CommandTag.RowsAffected() != wantRows {
+						t.Fatal("mutation success did not update exactly one prepared running child", result.CommandTag.RowsAffected(), wantRows, result.Err)
+					}
+					var status string
+					var code *int16
+					var resource, version *string
+					if err := tx.QueryRow(ctx, `SELECT status,result_code,result_resource_id,result_version FROM scim.bulk_children WHERE parent_id=$1 AND ordinal=$2`, args[0], args[1]).Scan(&status, &code, &resource, &version); err != nil {
+						t.Fatal(err)
+					}
+					if wantRows == 1 {
+						versionMatches := version == nil
+						if test.version != "" {
+							versionMatches = version != nil && *version == test.version
+						}
+						if status != "succeeded" || code == nil || int(*code) != test.code || resource == nil || *resource != args[4] || !versionMatches {
+							t.Fatal("mutation success changed the exact typed terminal result")
+						}
+					} else if status != test.status || code != nil || resource != nil || version != nil {
+						t.Fatal("mutation success bypassed its prepared-running guard")
+					}
+				})
+			}
+			t.Logf("Work binary mutation success client samples=%v; each transaction rolled back", elapsed)
+		})
+	}
+}
+
+func withBulkMutationPlanTransaction(t *testing.T, ctx context.Context, connection *pgx.Conn, measure func(pgx.Tx)) {
+	t.Helper()
+	tx, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := tx.Rollback(cleanup); err != nil {
+			t.Error("rollback measured mutation queries", err)
+		}
+	}()
+	measure(tx)
 }
 
 func requireBoundedBulkChildQueryPlan(t *testing.T, sanitized []byte) {

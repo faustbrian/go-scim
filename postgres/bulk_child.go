@@ -2,6 +2,7 @@ package scimpostgres
 
 import (
 	"context"
+	"errors"
 
 	identity "github.com/faustbrian/go-identity"
 	kernel "github.com/faustbrian/go-identity/postgres"
@@ -12,12 +13,13 @@ type bulkChildExecution struct {
 	parent              identity.CommandID
 	row                 bulkChildRow
 	original            originalInput
+	ifMatch             scim.Version
 	acknowledgedFailure bool
 }
 
-// ExecuteChild executes or recovers the original Group create at ordinal. The
+// ExecuteChild executes or recovers the original Group mutation at ordinal. The
 // original request and currently authorized connection are required on every
-// call. It advances only an acyclic Group create whose preceding components
+// call. It advances only an acyclic Group child whose preceding components
 // completed and dependencies succeeded, and cannot start it after the original parent
 // authority expires. Other children are not executed by this selection.
 // A returned result is only this child's checkpoint, never a terminal Bulk
@@ -48,16 +50,13 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		return result, err
 	}
 	selected := rows[ordinal]
-	groupCreate := child.Error == nil && bulkCreatesGroup(child)
-	if groupCreate {
-		if err := s.native.decide(ctx, string(scim.GroupCreate), "", "identity.scim.group"); err != nil {
+	operation, target := parent.bulk.selectGroupChild(ordinal, parent.bulk.groupCreateTargets())
+	if operation != "" {
+		if err := s.native.decide(ctx, string(operation), target, "identity.scim.group"); err != nil {
 			return result, err
 		}
 	}
-	phase := &bulkChildExecution{parent: parent.original.Command, row: selected, original: originalInput{
-		Command: identity.CommandID(selected.Command), ID: selected.Resource, Operation: scim.GroupCreate,
-		Version: scim.Version(`"` + selected.Command + `"`), At: parent.original.At, Admission: parent.original.Admission,
-	}}
+	phase := newBulkGroupExecution(parent.original, selected, operation, target, scim.Version(child.Version))
 	checkpoint, ready, err := s.native.readBulkChild(ctx, phase)
 	if err != nil {
 		return result, err
@@ -69,7 +68,7 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		if child.Error != nil {
 			return result, child.Error
 		}
-		if !groupCreate || selected.Cyclic {
+		if operation == "" || selected.Cyclic {
 			return result, scim.NewError(501, "")
 		}
 	}
@@ -93,6 +92,18 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		return result, err
 	}
 	defer clear(resolved.Data)
+	if operation != scim.GroupCreate && (resolved.Target.ResourceID != target || scim.Version(resolved.Version) != phase.ifMatch) {
+		return result, identity.UnavailableError{}
+	}
+	if nativeMutation(operation) && phase.ifMatch != "" {
+		preparer := nativePhase{service: s.native, bulkChild: phase, intent: scim.WriteIntent{
+			Operation: operation, Scope: parent.admission.connection.Scope, ResourceID: target, IfMatch: phase.ifMatch,
+		}}
+		phase.original, err = preparer.prepareBulkMutationOriginal(ctx, parent.original)
+		if err != nil {
+			return result, err
+		}
+	}
 	// Use the configured Group protocol for schema, member kinds, normalization,
 	// mapping and admission. The private invocation alone carries the exact
 	// allocated input into its existing Store. Its separate authentication does
@@ -100,8 +111,44 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 	i := parent.admission
 	i.bulkChild = phase
 	ctx = context.WithValue(ctx, invocationKey{}, &i)
-	response, err := s.groups.Execute(ctx, scim.Request{Operation: scim.GroupCreate, Credential: request.Credential, Body: resolved.Data, ContentType: "application/scim+json"})
+	response, err := s.groups.Execute(ctx, scim.Request{Operation: operation, ResourceID: target, IfMatch: phase.ifMatch, Credential: request.Credential, Body: resolved.Data, ContentType: "application/scim+json"})
 	if err != nil {
+		var protocol *scim.Error
+		if !phase.acknowledgedFailure && errors.As(err, &protocol) && nativeMutation(operation) {
+			var code kernel.FeatureFailureCode
+			p := i.phase
+			switch protocol.StatusCode() {
+			case 404:
+				if p != nil && p.bulkDenialMatches(kernel.FeatureFailureGroupMissing) {
+					code = kernel.FeatureFailureGroupMissing
+				}
+			case 412:
+				if p != nil && p.hasStaleBulkPrecondition() {
+					code = kernel.FeatureFailurePrecondition
+				}
+			case 428:
+				if p == nil && phase.ifMatch == "" {
+					// Ordinary Group validation rejected the missing precondition
+					// before Prepare. The admitted child already binds the full
+					// request and original authority; do not read the projection.
+					p = &nativePhase{service: s.native, bulkChild: phase, admission: i, original: phase.original, intent: scim.WriteIntent{
+						Operation: operation, Scope: i.connection.Scope, ResourceID: target,
+						CanonicalRequest: []byte("identity.scim.bulk.missing-if-match.v1"),
+					}}
+					coordinator, registry, setupErr := s.native.coordinator(p)
+					if setupErr != nil {
+						return result, setupErr
+					}
+					p.coordinator, p.registry = coordinator, registry
+					code = kernel.FeatureFailureGroupVersionRequired
+				}
+			}
+			if code != 0 {
+				if err := p.recordBulkProtocolDenial(ctx, code); err != nil {
+					return result, err
+				}
+			}
+		}
 		if phase.acknowledgedFailure {
 			checkpoint, _, readErr := s.native.readBulkChild(ctx, phase)
 			if readErr != nil {
@@ -116,11 +163,8 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		}
 		return result, err
 	}
-	if response.Status != 201 || response.ETag != phase.original.Version {
-		return result, identity.UnavailableError{}
-	}
 	checkpoint, _, err = s.native.readBulkChild(ctx, phase)
-	if err != nil || checkpoint.Status != scim.BulkChildSucceeded {
+	if err != nil || checkpoint.Status != scim.BulkChildSucceeded || response.Status != checkpoint.Code || response.ETag != checkpoint.Version {
 		return result, identity.UnavailableError{}
 	}
 	if err := s.native.recheckRead(ctx, &i); err != nil {
@@ -128,6 +172,99 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 	}
 	return checkpoint, nil
 }
+
+func (p *nativePhase) hasStaleBulkPrecondition() bool {
+	return p.bulkChild != nil && p.group() && nativeMutation(p.intent.Operation) &&
+		p.original.Current != nil && p.intent.IfMatch != "" && p.original.Current.Version != p.intent.IfMatch
+}
+
+func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
+	if p.bulkChild == nil || !p.group() || !nativeMutation(p.intent.Operation) || p.intent.ResourceID != p.original.ID || p.original.Operation != p.intent.Operation {
+		return false
+	}
+	switch code {
+	case kernel.FeatureFailureGroupMissing:
+		return p.intent.IfMatch != "" && p.original.Schema == 3 && p.original.Current == nil && p.original.Generation == 0
+	case kernel.FeatureFailureGroupVersionRequired:
+		return p.intent.IfMatch == "" && p.original.Schema == 0 && p.original.Current == nil && p.original.Generation == 0
+	default:
+		return false
+	}
+}
+
+func (p *nativePhase) recordBulkProtocolDenial(ctx context.Context, code kernel.FeatureFailureCode) error {
+	// The Group protocol has already authorized, parsed and rejected this exact
+	// request. The actual denial is derived again from the sealed original in
+	// Work. No transport error value or fresh projection can choose the outcome.
+	if err := p.service.decide(ctx, string(p.intent.Operation), p.intent.ResourceID, "identity.scim.group"); err != nil {
+		return err
+	}
+	if code != kernel.FeatureFailurePrecondition {
+		if !p.bulkDenialMatches(code) {
+			return identity.ForbiddenError{}
+		}
+		p.denialOnly = code
+	}
+	if err := p.initialize(ctx, p.intent.CanonicalRequest); err != nil {
+		return err
+	}
+	result, err := p.execute(ctx)
+	var denial kernel.TypedFeatureFailureError
+	if result.Outcome != identity.CommitOutcomeNotCommitted || !errors.As(err, &denial) || denial.Code != code {
+		return identity.UnavailableError{}
+	}
+	p.bulkChild.acknowledgedFailure = true
+	return nil
+}
+
+func (p *bulkAdmissionPhase) groupCreateTargets() map[string]string {
+	targets := make(map[string]string)
+	for i, child := range p.children {
+		if child.Error == nil && bulkCreatesGroup(child) && child.BulkID != "" {
+			targets[child.BulkID] = p.allocation[i].Resource
+		}
+	}
+	return targets
+}
+
+func (p *bulkAdmissionPhase) selectGroupChild(ordinal int, targets map[string]string) (scim.Operation, string) {
+	child := p.children[ordinal]
+	if child.Error != nil || child.Target.ResourceType != "Group" {
+		return "", ""
+	}
+	if child.Method == "POST" {
+		return scim.GroupCreate, ""
+	}
+	target := child.Target.ResourceID
+	if child.Target.BulkID != "" {
+		target = targets[child.Target.BulkID]
+	}
+	if target == "" {
+		return "", ""
+	}
+	switch child.Method {
+	case "PUT":
+		return scim.GroupReplace, target
+	case "PATCH":
+		return scim.GroupPatch, target
+	case "DELETE":
+		return scim.GroupDelete, target
+	default:
+		return "", ""
+	}
+}
+
+func newBulkGroupExecution(parent originalInput, row bulkChildRow, op scim.Operation, target string, ifMatch scim.Version) *bulkChildExecution {
+	if op == scim.GroupCreate {
+		target = row.Resource
+	}
+	return &bulkChildExecution{parent: parent.Command, row: row, ifMatch: ifMatch, original: originalInput{
+		Command: identity.CommandID(row.Command), ID: target, Operation: op,
+		Version: bulkChildVersion(row.Command), At: parent.At, Admission: parent.Admission,
+	}}
+}
+
+func bulkChildVersion(command string) scim.Version { return scim.Version(`"` + command + `"`) }
 
 // The parent was verified against original custody and the adapter's exact
 // scope. The child predicates bind the immutable graph identity and plan;
@@ -162,6 +299,10 @@ const bulkChildSucceed = `UPDATE scim.bulk_children SET status='succeeded',resul
 WHERE parent_id=$1 AND ordinal=$2 AND command_id=$3 AND request_fingerprint=$4 AND resource_id=$5
  AND component_order=$6 AND status='running'`
 
+const bulkGroupMutationSucceed = `UPDATE scim.bulk_children SET status='succeeded',result_code=$7,result_resource_id=$8,result_version=NULLIF($9::text,'')
+WHERE parent_id=$1 AND ordinal=$2 AND command_id=$3 AND request_fingerprint=$4 AND resource_id=$5
+ AND component_order=$6 AND status='running' AND group_mutation_input IS NOT NULL`
+
 func (p *bulkChildExecution) args() []any {
 	return []any{string(p.parent), p.row.Ordinal, p.row.Command, p.row.Fingerprint, p.row.Resource, p.row.ComponentOrder}
 }
@@ -179,11 +320,13 @@ func (s *Service) readBulkChild(ctx context.Context, phase *bulkChildExecution) 
 }
 
 func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *int64, resource, version *string, ready bool) (scim.BulkChildResult, bool, error) {
-	if status == "succeeded" && code != nil && *code == 201 && resource != nil && *resource == phase.original.ID && version != nil && *version == string(phase.original.Version) {
-		return scim.BulkChildResult{Status: scim.BulkChildSucceeded, Code: 201, ResourceID: *resource, Version: scim.Version(*version)}, false, nil
+	if status == "succeeded" && code != nil && resource != nil && *resource == phase.original.ID {
+		if result, ok := phase.successfulResult(*code, version); ok {
+			return result, false, nil
+		}
 	}
 	if status == "failed" && code != nil && resource == nil && version == nil {
-		if result, ok := bulkGroupFailureResult(int(*code)); ok {
+		if result, ok := bulkGroupFailureResult(phase.original.Operation, int(*code)); ok {
 			return result, false, nil
 		}
 	}
@@ -195,6 +338,30 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 		return scim.BulkChildResult{Status: scim.BulkChildSkipped, SkipReason: scim.BulkSkipFailOnErrors}, false, nil
 	}
 	return scim.BulkChildResult{}, false, identity.UnavailableError{}
+}
+
+func (p *bulkChildExecution) successfulResult(code int64, version *string) (scim.BulkChildResult, bool) {
+	result := scim.BulkChildResult{Status: scim.BulkChildSucceeded, Code: int(code), ResourceID: p.original.ID}
+	if p.original.ID == "" {
+		return result, false
+	}
+	if p.original.Operation == scim.GroupDelete {
+		return result, code == 204 && version == nil
+	}
+	if version == nil {
+		return result, false
+	}
+	result.Version = scim.Version(*version)
+	switch p.original.Operation {
+	case scim.GroupCreate:
+		return result, code == 201 && result.Version == p.original.Version
+	case scim.GroupReplace:
+		return result, code == 200 && result.Version == p.original.Version
+	case scim.GroupPatch:
+		return result, code == 200 && (result.Version == p.original.Version || p.ifMatch != "" && result.Version == p.ifMatch)
+	default:
+		return result, false
+	}
 }
 
 func (p *nativePhase) applyBulkGroupChild(ctx context.Context, w kernel.Work) (identity.FeatureReceipt, error) {
@@ -210,10 +377,24 @@ func (p *nativePhase) applyBulkGroupChild(ctx context.Context, w kernel.Work) (i
 	if err != nil {
 		return identity.FeatureReceipt{}, err
 	}
-	if p.resource.ID != phase.original.ID || p.resource.Version != phase.original.Version {
-		return identity.FeatureReceipt{}, identity.UnavailableError{}
+	if p.intent.Operation == scim.GroupCreate {
+		if p.resource.ID != phase.original.ID || p.resource.Version != phase.original.Version {
+			return identity.FeatureReceipt{}, identity.UnavailableError{}
+		}
+		count, err = w.Exec(ctx, bulkChildSucceed, append(phase.args(), string(p.resource.Version))...)
+	} else {
+		code, version := 204, ""
+		if p.intent.Operation != scim.GroupDelete {
+			code, version = 200, string(p.resource.Version)
+			if p.resource.ID != phase.original.ID {
+				return identity.FeatureReceipt{}, identity.UnavailableError{}
+			}
+			if _, ok := phase.successfulResult(int64(code), &version); !ok {
+				return identity.FeatureReceipt{}, identity.UnavailableError{}
+			}
+		}
+		count, err = w.Exec(ctx, bulkGroupMutationSucceed, append(phase.args(), code, phase.original.ID, version)...)
 	}
-	count, err = w.Exec(ctx, bulkChildSucceed, append(phase.args(), string(p.resource.Version))...)
 	if err != nil || count != 1 {
 		return identity.FeatureReceipt{}, identity.UnavailableError{}
 	}

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Use the ordinary Group writer for acyclic Bulk replace, PATCH and delete.
+  Retain encrypted original preparation, operation-specific replay, and the
+  exact protected 404, 412 and 428 results. Install the additive Group Bulk
+  mutation migration before selecting these operations.
+
 - On an authorized Group Bulk retry, reconcile a previously recorded native
   denial that predates child failure accounting. Count it once and emit a
   separate reconciliation audit without changing the original denial.

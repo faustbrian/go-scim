@@ -52,6 +52,19 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 		status = 400
 	case kernel.FeatureFailureConflict:
 		status = 409
+	case kernel.FeatureFailurePrecondition:
+		if !nativeMutation(p.intent.Operation) || !p.group() {
+			return identity.ForbiddenError{}
+		}
+		status = 412
+	case kernel.FeatureFailureGroupMissing, kernel.FeatureFailureGroupVersionRequired:
+		if p.denialOnly != failure || !p.bulkDenialMatches(failure) {
+			return identity.ForbiddenError{}
+		}
+		status = 404
+		if failure == kernel.FeatureFailureGroupVersionRequired {
+			status = 428
+		}
 	default:
 		return identity.UnavailableError{}
 	}
@@ -134,7 +147,8 @@ func (p *nativePhase) CheckSCIMBulkChildReconciliation(ctx context.Context, w ke
 }
 
 func (p *nativePhase) checkBulkChildReconciliationScope(w kernel.Work) error {
-	if p == nil || p.service == nil || p.bulk != nil || p.bootstrap || p.bulkChild == nil || p.intent.Operation != scim.GroupCreate {
+	if p == nil || p.service == nil || p.bulk != nil || p.bootstrap || p.bulkChild == nil || !p.group() ||
+		!nativeCreate(p.intent.Operation) && !nativeMutation(p.intent.Operation) {
 		return identity.ForbiddenError{}
 	}
 	phase := p.bulkChild
@@ -144,11 +158,11 @@ func (p *nativePhase) checkBulkChildReconciliationScope(w kernel.Work) error {
 		return identity.ForbiddenError{}
 	}
 	if binding.CommandID != phase.original.Command || binding.CorrelationID != string(phase.parent) || binding.RecordID != phase.original.ID ||
-		phase.row.Command != string(binding.CommandID) || phase.row.Resource != binding.RecordID || phase.row.Cyclic {
+		phase.row.Command != string(binding.CommandID) || p.intent.Operation == scim.GroupCreate && phase.row.Resource != binding.RecordID || phase.row.Cyclic {
 		return identity.ForbiddenError{}
 	}
 	if p.original.Command != phase.original.Command || p.original.ID != phase.original.ID || p.original.Version != phase.original.Version ||
-		p.original.Operation != scim.GroupCreate || phase.original.Operation != scim.GroupCreate {
+		p.original.Operation != p.intent.Operation || phase.original.Operation != p.intent.Operation {
 		return identity.ForbiddenError{}
 	}
 	return nil
@@ -211,12 +225,22 @@ func skipAdmittedBulkChildren(ctx context.Context, w kernel.Work, parent identit
 	return result, nil
 }
 
-func bulkGroupFailureResult(status int) (scim.BulkChildResult, bool) {
+func bulkGroupFailureResult(op scim.Operation, status int) (scim.BulkChildResult, bool) {
 	result := scim.BulkChildResult{Status: scim.BulkChildFailed, Code: status}
+	if !groupOperation(op) || !nativeCreate(op) && !nativeMutation(op) {
+		return scim.BulkChildResult{}, false
+	}
 	switch status {
 	case 400:
+		if op == scim.GroupDelete {
+			return scim.BulkChildResult{}, false
+		}
 		result.SCIMType = "invalidValue"
 	case 409:
+	case 404, 412, 428:
+		if !nativeMutation(op) {
+			return scim.BulkChildResult{}, false
+		}
 	default:
 		return scim.BulkChildResult{}, false
 	}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"slices"
 	"strconv"
 
 	"github.com/faustbrian/go-audit"
@@ -20,6 +21,7 @@ type nativePhase struct {
 	service     *Service
 	bulk        *bulkAdmissionPhase
 	bulkChild   *bulkChildExecution
+	denialOnly  kernel.FeatureFailureCode
 	bootstrap   bool
 	admission   invocation
 	original    originalInput
@@ -228,7 +230,14 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 }
 
 func (p *nativePhase) ValidateFeatureCommand(command identity.Command, plan kernel.CommandPlan) error {
-	if p == nil || p.service == nil || command != p.command || command == (identity.Command{}) || plan.Feature == nil || *plan.Feature != p.registration() || plan.SubjectType != p.subjectType() || plan.Lifecycle == nil || *plan.Lifecycle != p.lifecycle() || len(plan.Audits) != 1 || plan.Audits[0].EventType != p.auditAction() {
+	if p == nil || p.service == nil || command != p.command || command == (identity.Command{}) || plan.Feature == nil || *plan.Feature != p.registration() || plan.SubjectType != p.subjectType() || plan.SCIMBulkDenial != p.denialOnly || len(plan.Audits) != 1 || plan.Audits[0].EventType != p.auditAction() {
+		return identity.InvalidInputError{Field: "scim_command"}
+	}
+	if p.denialOnly != 0 {
+		if plan.Lifecycle != nil || !p.bulkDenialMatches(p.denialOnly) {
+			return identity.InvalidInputError{Field: "scim_command"}
+		}
+	} else if plan.Lifecycle == nil || *plan.Lifecycle != p.lifecycle() {
 		return identity.InvalidInputError{Field: "scim_command"}
 	}
 	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
@@ -283,6 +292,15 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		}
 	} else if p.group() {
 		if p.bulkChild != nil {
+			if p.denialOnly != 0 {
+				if !p.bulkDenialMatches(p.denialOnly) {
+					return identity.FeatureReceipt{}, identity.ForbiddenError{}
+				}
+				return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, p.denialOnly)
+			}
+			if p.hasStaleBulkPrecondition() {
+				return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, kernel.FeatureFailurePrecondition)
+			}
 			return p.applyBulkGroupChild(ctx, w)
 		}
 		return p.applyGroupProjection(ctx, w)
@@ -415,7 +433,7 @@ func (p *nativePhase) executionPlan() (kernel.CommandPlan, error) {
 	spec, _ := p.command.Feature()
 	b, op := spec.Binding, spec.Operation
 	lifecycle := p.lifecycle()
-	if lifecycle.EventType == "" {
+	if lifecycle.EventType == "" && p.denialOnly == 0 {
 		return kernel.CommandPlan{}, identity.InvalidInputError{Field: "scim_projection_generation"}
 	}
 	builder, err := audit.NewBuilder(audit.BuilderConfig{})
@@ -436,6 +454,11 @@ func (p *nativePhase) executionPlan() (kernel.CommandPlan, error) {
 	}
 	registration := p.registration()
 	plan := kernel.CommandPlan{Contributors: p.registry.Descriptors(), Feature: &registration, SubjectType: p.subjectType(), Lifecycle: &lifecycle, Audits: []kernel.AuditPlan{{EventType: action, SchemaVersion: 1, Required: true, RequiredRecordCount: 1, MaxRecordBytes: 16384, MaxAggregateBytes: 16384, RetentionPolicyVersion: 1, RetentionClass: "protected", BindingDigest: digest}}}
+	if p.denialOnly != 0 {
+		plan.SCIMBulkDenial = p.denialOnly
+		plan.Lifecycle = nil
+		plan.Contributors = slices.DeleteFunc(plan.Contributors, func(d kernel.ContributorDescriptor) bool { return d.Owner == "outbox/postgres" })
+	}
 	if p.intent.Operation == scim.UserReplace || p.intent.Operation == scim.UserPatch {
 		plan.SCIMUserUpdate = &kernel.SCIMUserUpdatePlan{Required: len(p.update.Attributes) > 0, ExpectedVersion: p.update.ExpectedVersion}
 	}

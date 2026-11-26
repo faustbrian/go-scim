@@ -44,10 +44,33 @@ func (s *GroupBulkService) ReadResult(ctx context.Context, request BulkAdmission
 	if err != nil {
 		return nil, err
 	}
-	// All currently executable children are Group creates. Their terminal
-	// results require the same current policy as individual child replay.
-	if err := s.native.decide(ctx, string(scim.GroupCreate), "", "identity.scim.group"); err != nil {
-		return nil, err
+	// An authorized Bulk connection is not authority to disclose each result.
+	// Check the original operation against the same target as ExecuteChild.
+	// Multiple results with the same operation and target have the same scope.
+	type disclosure struct {
+		op     scim.Operation
+		target string
+	}
+	targets := p.bulk.groupCreateTargets()
+	authorized := make(map[disclosure]struct{})
+	for ordinal, result := range results {
+		if result.Status == scim.BulkChildSkipped {
+			continue
+		}
+		op, target := p.bulk.selectGroupChild(ordinal, targets)
+		if op == "" {
+			return nil, identity.UnavailableError{}
+		}
+		key := disclosure{op: op, target: target}
+		if _, ok := authorized[key]; !ok {
+			if err := s.native.decide(ctx, string(op), target, "identity.scim.group"); err != nil {
+				return nil, err
+			}
+			authorized[key] = struct{}{}
+		}
+		if result.Status == scim.BulkChildFailed && p.bulk.children[ordinal].Target.BulkID != "" {
+			results[ordinal].ResourceID = target
+		}
 	}
 	var response bytes.Buffer
 	if err := prepared.response.Write(&response, results); err != nil {
@@ -82,6 +105,7 @@ func (p *nativePhase) readBulkTerminalCheckpoints(ctx context.Context) ([]scim.B
 	results := make([]scim.BulkChildResult, 0, len(expected))
 	var failed, retainedFailures int
 	var cutoff, incomplete bool
+	targets := p.bulk.groupCreateTargets()
 	for rows.Next() {
 		index := len(results)
 		if index == len(expected) {
@@ -97,8 +121,12 @@ func (p *nativePhase) readBulkTerminalCheckpoints(ctx context.Context) ([]scim.B
 			r.cyclic != original.Cyclic || !bytes.Equal(r.fingerprint, original.Fingerprint) {
 			return nil, identity.UnavailableError{}
 		}
-		child := p.bulk.children[index]
-		result, err := r.result(child.Error == nil && bulkCreatesGroup(child) && !original.Cyclic, cutoff)
+		op, target := p.bulk.selectGroupChild(index, targets)
+		if original.Cyclic {
+			op = ""
+		}
+		phase := newBulkGroupExecution(p.original, original, op, target, scim.Version(p.bulk.children[index].Version))
+		result, err := r.result(phase, cutoff)
 		if err != nil && !errors.Is(err, scim.ErrBulkIncomplete) {
 			return nil, err
 		}
@@ -133,7 +161,7 @@ type bulkTerminalCheckpoint struct {
 	resource, version       *string
 }
 
-func (r bulkTerminalCheckpoint) result(groupCreate, cutoff bool) (scim.BulkChildResult, error) {
+func (r bulkTerminalCheckpoint) result(phase *bulkChildExecution, cutoff bool) (scim.BulkChildResult, error) {
 	empty := r.code == nil && r.resource == nil && r.version == nil
 	if r.status == "skipped" {
 		if empty && cutoff && r.skipReason == "fail-on-errors" {
@@ -150,15 +178,16 @@ func (r bulkTerminalCheckpoint) result(groupCreate, cutoff bool) (scim.BulkChild
 			return scim.BulkChildResult{}, scim.ErrBulkIncomplete
 		}
 	case "failed":
-		if groupCreate && r.code != nil && r.resource == nil && r.version == nil {
-			if result, valid := bulkGroupFailureResult(int(*r.code)); valid {
+		if phase.original.Operation != "" && r.code != nil && r.resource == nil && r.version == nil {
+			if result, valid := bulkGroupFailureResult(phase.original.Operation, int(*r.code)); valid {
 				return result, nil
 			}
 		}
 	case "succeeded":
-		if groupCreate && r.code != nil && *r.code == 201 && r.resource != nil && *r.resource == r.allocation &&
-			r.version != nil && *r.version == `"`+r.command+`"` {
-			return scim.BulkChildResult{Status: scim.BulkChildSucceeded, Code: 201, ResourceID: *r.resource, Version: scim.Version(*r.version)}, nil
+		if r.code != nil && r.resource != nil && *r.resource == phase.original.ID {
+			if result, ok := phase.successfulResult(int64(*r.code), r.version); ok {
+				return result, nil
+			}
 		}
 	}
 	return scim.BulkChildResult{}, identity.UnavailableError{}

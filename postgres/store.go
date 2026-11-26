@@ -31,7 +31,8 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 	}
 	p := &nativePhase{service: b.service, admission: *i, intent: intent}
 	if i.bulkChild != nil {
-		if !b.groups || intent.Operation != scim.GroupCreate || intent.IdempotencyKey != "" {
+		if !b.groups || intent.Operation != i.bulkChild.original.Operation || intent.IdempotencyKey != "" ||
+			intent.IfMatch != i.bulkChild.ifMatch || !nativeCreate(intent.Operation) && intent.ResourceID != i.bulkChild.original.ID {
 			return scim.PreparedWrite{}, identity.ForbiddenError{}
 		}
 		p.bulkChild = i.bulkChild
@@ -261,6 +262,9 @@ func (b *protocolBridge) commitDelete(ctx context.Context, p *nativePhase, prepa
 	if failure, ok := featureFailure(result, err); ok {
 		if err := b.recheckFailureDisclosure(ctx, p); err != nil {
 			return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, err
+		}
+		if p.bulkChild != nil && result.Outcome == identity.CommitOutcomeNotCommitted {
+			p.bulkChild.acknowledgedFailure = true
 		}
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, failure
 	}
