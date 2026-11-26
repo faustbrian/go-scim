@@ -43,6 +43,19 @@ its bearer once; retry, Get and List return only the safe record. Keep the
 bearer with the exact directory provider and use it with
 `ExecuteManagedProvisioning` for User Create, Get, List and conditional Delete.
 
+For an explicit admitted read, select `ExecuteManagedAdmittedRead` with that
+issued bearer, the exact tenant and a nonnil `scim.ProtocolAdmission` gate.
+Only User Get and List are selected. The gate runs once after current native
+bearer authentication and operation authorization, before resource I/O, and
+receives the selected native service's configured service-account actor and
+tenant. It receives no bearer material or request-selected identity. The root
+protocol retains the remaining original authority and parent/request deadlines,
+normalizes gate denials including bounded 429 retry metadata, and withholds
+output after cancellation or expiry. The gate is borrowed synchronously, must
+honor its context and retain no invocation or detached work. Ordinary managed
+provisioning stays unchanged; this adds neither a quota engine nor HTTP routes,
+search, discovery, Groups or writes to the admitted selection.
+
 Managed Delete uses the connection's persisted `RemoveMembership` policy. The
 same transaction tombstones the selected SCIM User resource and retires only
 its current organization membership contribution. The last active directory

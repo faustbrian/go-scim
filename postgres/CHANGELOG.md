@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit admitted User Get/List for an issued managed connection bearer.
+  Bind the selected native service-account client and tenant after current
+  authentication and authorization, using the root protocol's synchronous gate,
+  original deadlines, redacted denials and final disclosure fence. Ordinary
+  managed provisioning, SQL and HTTP routing are unchanged.
+
 - Create and read managed SCIM connections with current administrator authority.
   Reveal the issued bearer once for scoped User provisioning. Conditional
   managed Delete atomically tombstones the User projection and withdraws only
