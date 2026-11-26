@@ -116,6 +116,51 @@ func (s *ManagedConnectionService) ExecuteManagedAdmittedGroupRead(ctx context.C
 	})
 }
 
+// ExecuteManagedAdmittedGroupCreate selects only Group Create for an issued
+// managed bearer in the exact tenant, using the existing native Groups store.
+// maximumMembers is trusted deployment configuration with NewGroupsService's
+// explicit 0..scim.DefaultGroupMembers semantics; zero permits only empty Groups.
+// A nonnil synchronous gate is required. Invalid composition returns 503 and
+// other operations return 501; existing managed selections remain unchanged.
+//
+// Current native bearer/operation authority and bounded root Group/schema/member
+// validation precede the gate's one invocation, before mapping or command effects.
+// The gate receives only the configured service-account client and tenant, must
+// honor ctx, and must retain no invocation/context or start detached work. The
+// root owns remaining original deadlines, redacted denials/retry metadata, reentry
+// and final disclosure fences. The native Store retains its existing request-key
+// policy, original command/replay and atomic exact-connection member integrity.
+// No SQL, migration, retry owner, HTTP route or other Group write is selected.
+func (s *ManagedConnectionService) ExecuteManagedAdmittedGroupCreate(ctx context.Context, tenant identity.TenantID, request scim.Request, maximumMembers int, admit scim.ProtocolAdmission) (scim.Response, error) {
+	if s == nil || ctx == nil || s.writer == nil || admit == nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	if request.Operation != scim.GroupCreate {
+		return scim.Response{}, scim.NewError(501, "")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.config.MaximumDuration)
+	defer cancel()
+
+	source, err := s.loadManagedProvisioning(ctx, tenant, request.Credential)
+	if err != nil {
+		var denied identity.ForbiddenError
+		if errors.As(err, &denied) {
+			return scim.Response{}, scim.NewError(401, "")
+		}
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	groups, err := NewGroupsService(source, maximumMembers)
+	if err != nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	return source.executeProtocol(ctx, request, func(ctx context.Context, request scim.Request) (scim.Response, error) {
+		return groups.protocol.ExecuteAdmittedCreate(ctx, request, func(ctx context.Context) *scim.Error {
+			configured := source.config()
+			return admit(ctx, scim.ProtocolClient{ID: configured.ActorID, TenantID: configured.Scope.TenantID})
+		})
+	})
+}
+
 // ExecuteManagedAdmittedCreate selects only User Create for an issued managed
 // bearer in the exact tenant. A nonnil synchronous admission gate is required;
 // other operations return 501 and missing composition returns 503. Ordinary

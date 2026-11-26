@@ -93,6 +93,22 @@ version semantics retain their existing owners. This does not enable ordinary
 managed Group execution, Group search/writes/discovery, a quota engine, new SQL
 or HTTP routes; User admission and provisioning selections are unchanged.
 
+`ExecuteManagedAdmittedGroupCreate(ctx, tenant, request, maximumMembers, gate)`
+separately selects only Group Create for the issued managed bearer and exact
+tenant. It uses the same trusted member ceiling and existing native Groups
+migration/store as Group reads. Current bearer/operation authority and bounded
+root Group/schema/member validation precede the required gate's one invocation,
+before mapping or command effects. The gate receives the configured native
+service-account client and tenant, must honor its original context, and must
+retain no invocation/context or start detached work. Root original deadlines,
+redacted denials/retry metadata, reentry and final disclosure fences apply.
+The existing native Store retains its request-key policy and original command
+replay; a matching explicit key returns the original Group and metadata without
+another projection, command, audit or outbox effect. Typed User and Group member
+references must exist in the exact connection at commit and are never modified
+or traversed. This adds no SQL, migration, mapping/retry owner, HTTP route or
+other Group write. User Create and Group read selections remain unchanged.
+
 `ExecuteManagedAdmittedCreate` separately selects only User Create with the
 issued managed bearer, exact tenant and required `scim.ProtocolAdmission` gate.
 Existing root request/schema validation and current native bearer/operation

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit admitted Group Create for issued managed bearers and the exact
+  tenant, using the configured native client and existing Group store. Retain
+  bounded typed member isolation, native request keys and original replay;
+  no SQL, migration, retry owner, HTTP route or other write selection is added.
+
 - Add explicit admitted Group Get/List for issued managed bearers and the exact
   tenant, using the configured native client, existing Group store and trusted
   member ceiling. Preserve root query/version semantics, original deadlines,
