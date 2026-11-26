@@ -68,6 +68,12 @@ func (s *GroupBulkService) writeBulkResult(ctx context.Context, prepared prepare
 		}
 		op, target := p.bulk.selectChild(ordinal, targets)
 		if op == "" {
+			// Only an exact resource-free denial is disclosed by Bulk authority
+			// alone. Checkpoints with any resource operation still have their
+			// separate authorization below.
+			if resourceFreeBulkError(p.bulk.children[ordinal]) && result == (scim.BulkChildResult{Status: scim.BulkChildFailed, Code: 400, SCIMType: "invalidValue"}) {
+				continue
+			}
 			return nil, identity.UnavailableError{}
 		}
 		key := disclosure{op: op, target: target}
@@ -140,7 +146,11 @@ func (p *nativePhase) readBulkCheckpoints(ctx context.Context) ([]scim.BulkChild
 		if original.Cyclic && op != scim.GroupCreate {
 			op = ""
 		}
-		phase := newBulkChildExecution(p.original, original, op, target, scim.Version(p.bulk.children[index].Version))
+		child := p.bulk.children[index]
+		phase := newStructuralBulkChild(p.original, original, child)
+		if phase == nil {
+			phase = newBulkChildExecution(p.original, original, op, target, scim.Version(child.Version))
+		}
 		result, err := r.result(phase, cutoff)
 		if err != nil && !errors.Is(err, scim.ErrBulkIncomplete) {
 			return nil, err

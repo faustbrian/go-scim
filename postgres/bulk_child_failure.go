@@ -55,7 +55,7 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 		return p.recordBulkDependencyFailure(ctx, w)
 	case kernel.FeatureFailureInvalidGroupMember:
 		status = 400
-	case kernel.FeatureFailureGroupCreateInvalidValue:
+	case kernel.FeatureFailureGroupCreateInvalidValue, kernel.FeatureFailureBulkChildInvalid:
 		if p.denialOnly != failure || !p.bulkDenialMatches(failure) {
 			return identity.ForbiddenError{}
 		}

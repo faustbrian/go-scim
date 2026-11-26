@@ -18,6 +18,21 @@ type bulkChildExecution struct {
 	cycle               *groupCreateCycleMember
 }
 
+const bulkInvalidChild scim.Operation = "identity.scim.bulk-child-invalid"
+
+func resourceFreeBulkError(child scim.BulkOperation) bool {
+	return child.Error != nil && child.Error.StatusCode() == 400 && child.Error.SCIMType() == "invalidValue" &&
+		child.Target == (scim.BulkTarget{}) && len(child.Dependencies) == 0
+}
+
+func newStructuralBulkChild(parent originalInput, row bulkChildRow, child scim.BulkOperation) *bulkChildExecution {
+	if !resourceFreeBulkError(child) || row.Resource != "" || row.Cyclic || len(row.Dependencies) != 0 {
+		return nil
+	}
+	// Command identity is also the denial record identity, not a resource ID.
+	return newBulkChildExecution(parent, row, bulkInvalidChild, row.Command, "")
+}
+
 // ExecuteChild executes or recovers the original Group mutation at ordinal. The
 // original request and currently authorized connection are required on every
 // call. It advances an acyclic Group child or its all-Group create cycle
@@ -61,7 +76,11 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 			return result, err
 		}
 	}
-	phase := newBulkChildExecution(parent.original, selected, operation, target, scim.Version(child.Version))
+	phase := newStructuralBulkChild(parent.original, selected, child)
+	structural := phase != nil
+	if !structural {
+		phase = newBulkChildExecution(parent.original, selected, operation, target, scim.Version(child.Version))
+	}
 	checkpoint, ready, err := s.native.readBulkChild(ctx, phase)
 	if err != nil {
 		return result, err
@@ -69,7 +88,7 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 	// Cutoff can skip any admitted declaration, including a child whose parsed
 	// operation would be invalid or unsupported. Replay that retained skip, not
 	// a new operation result. Before cutoff the original errors still apply.
-	if checkpoint.Status != scim.BulkChildSkipped {
+	if checkpoint.Status != scim.BulkChildSkipped && !structural {
 		if child.Error != nil {
 			return result, child.Error
 		}
@@ -85,6 +104,12 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 			return result, err
 		}
 		return checkpoint, nil
+	}
+	if structural {
+		if !ready {
+			return result, identity.ConflictError{}
+		}
+		return s.retainStructuralBulkDenial(ctx, parent, phase)
 	}
 	if selected.Cyclic {
 		return s.executeGroupCreateCycle(ctx, request, parent, plan, rows, ordinal)
@@ -234,6 +259,12 @@ func (p *nativePhase) hasStaleBulkPrecondition() bool {
 }
 
 func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
+	if code == kernel.FeatureFailureBulkChildInvalid {
+		child := p.bulkChild
+		return child != nil && !child.row.Cyclic && len(child.row.Dependencies) == 0 && child.row.Resource == "" &&
+			p.intent.Operation == bulkInvalidChild && p.intent.ResourceID == "" && p.intent.IfMatch == "" &&
+			p.original == child.original && p.original.Operation == bulkInvalidChild && p.original.ID == string(p.original.Command)
+	}
 	if code == kernel.FeatureFailureSCIMBulkDependency {
 		return p.bulkChild != nil && (nativeMutation(p.intent.Operation) || p.intent.Operation == scim.GroupCreate) && !p.bulkChild.row.Cyclic &&
 			len(p.bulkChild.row.Dependencies) > 0 && p.original == p.bulkChild.original && p.intent.Operation == p.original.Operation
@@ -267,7 +298,11 @@ func (p *nativePhase) recordBulkProtocolDenial(ctx context.Context, code kernel.
 	// The resource protocol has already authorized, parsed and rejected this exact
 	// request. The actual denial is derived again from the sealed original in
 	// Work. No transport error value or fresh projection can choose the outcome.
-	if err := p.service.decide(ctx, string(p.intent.Operation), p.intent.ResourceID, bulkChildAuthorizationType(p.intent.Operation)); err != nil {
+	op, target, kind := p.intent.Operation, p.intent.ResourceID, bulkChildAuthorizationType(p.intent.Operation)
+	if code == kernel.FeatureFailureBulkChildInvalid {
+		op, target, kind = scim.Bulk, p.service.config().Scope.ConnectionID, "identity.scim.bulk"
+	}
+	if err := p.service.decide(ctx, string(op), target, kind); err != nil {
 		return err
 	}
 	if code != kernel.FeatureFailurePrecondition {
@@ -450,6 +485,12 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 }
 
 func (p *bulkChildExecution) failureResult(code int) (scim.BulkChildResult, bool) {
+	if p.original.Operation == bulkInvalidChild {
+		if code == 400 && p.row.Resource == "" && !p.row.Cyclic && len(p.row.Dependencies) == 0 {
+			return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code, SCIMType: "invalidValue"}, true
+		}
+		return scim.BulkChildResult{}, false
+	}
 	if code == 424 && (p.row.Cyclic && p.original.Operation == scim.GroupCreate ||
 		!p.row.Cyclic && len(p.row.Dependencies) > 0 && (nativeMutation(p.original.Operation) || p.original.Operation == scim.GroupCreate)) {
 		return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true

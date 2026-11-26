@@ -40,6 +40,9 @@ func (*nativePhase) Descriptor() kernel.ContributorDescriptor {
 	return kernel.ContributorDescriptor{Owner: "scim/postgres", ContractID: "identity.scim", Version: 1}
 }
 func (p *nativePhase) FeatureOperations() []identity.FeatureOperation {
+	if p.intent.Operation == bulkInvalidChild {
+		return []identity.FeatureOperation{kernel.SCIMBulkInvalidChildOperation()}
+	}
 	if p.bulk != nil {
 		return []identity.FeatureOperation{mutationOperation(scim.Bulk)}
 	}
@@ -59,6 +62,9 @@ func mutationOperation(op scim.Operation) identity.FeatureOperation {
 	return operation
 }
 func (p *nativePhase) operation() identity.FeatureOperation {
+	if p.intent.Operation == bulkInvalidChild {
+		return kernel.SCIMBulkInvalidChildOperation()
+	}
 	if p.bulk != nil {
 		return mutationOperation(scim.Bulk)
 	}
@@ -74,6 +80,9 @@ func (p *nativePhase) registration() kernel.FeatureRegistration {
 	return kernel.FeatureRegistration{Contributor: p.Descriptor(), Operation: p.operation()}
 }
 func (p *nativePhase) subjectType() string {
+	if p.intent.Operation == bulkInvalidChild {
+		return "scim_bulk_child"
+	}
 	if p.bulk != nil {
 		return "scim_bulk"
 	}
@@ -139,7 +148,7 @@ func (p *nativePhase) lifecycle() kernel.LifecyclePlan {
 func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 	c, op := p.service.config(), p.operation()
 	id := p.original.ID
-	if p.bootstrap || p.group() {
+	if p.bootstrap || p.group() || p.intent.Operation == bulkInvalidChild {
 		id = string(c.ActorID)
 	}
 	record := p.original.ID
@@ -186,7 +195,7 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 			}
 			fields = append(fields, updateFields...)
 		}
-	} else if !p.bootstrap && !p.group() {
+	} else if !p.bootstrap && !p.group() && p.intent.Operation != bulkInvalidChild {
 		creationBinding := b
 		creationBinding.OperationID = "identity.user.create"
 		creationBinding.SchemaID = c.FieldSchema.ID

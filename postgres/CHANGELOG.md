@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Retain a malformed Bulk child with no resource target as an audited
+  `400 invalidValue`. Apply cutoff or continue without a resource write.
+
 - Retain a Group-create `invalidValue` reported before writes as a protected
   Bulk child denial. Count it toward cutoff and replay the exact result.
 
