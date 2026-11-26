@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add explicit conditional GroupReplace admission after current bearer/operation
+  authority and bounded target, strong If-Match, replacement/schema/member
+  preflight, before command, mapping or Store effects. Preserve complete
+  replacement semantics, canonical Store command/replay, exact-connection typed
+  membership, atomic conditional writes, original deadlines and redacted
+  disclosure/reentry fences; ordinary execution and sibling selections are
+  unchanged.
+
 - Add explicit GroupCreate admission after current bearer/operation authority
   and bounded Group/member preflight, before command, mapping or Store effects.
   Preserve canonical Store command/replay, exact-connection typed membership,

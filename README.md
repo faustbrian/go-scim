@@ -153,6 +153,22 @@ connection and atomic write authority remain unchanged. This selection adds
 no credential verifier, quota owner, storage, HTTP route or other Group write;
 ordinary execution and separate User and Group-read selections are unchanged.
 
+`GroupsService.ExecuteAdmittedReplace(ctx, request, gate)` separately selects
+only `GroupReplace`. Current bearer/operation authority and existing bounded
+target, required strong `If-Match`, complete Group replacement, schema/member
+and query checks precede its once-per-attempt gate, including retries. Omitted
+writable fields and members retain replacement semantics, not PATCH merging.
+No command allocation, mapping or GroupStore admission precedes an allowed,
+still-current result. Canonical input, Store-owned original command/replay,
+exact-connection typed member integrity and atomic conditional write authority
+remain unchanged; admission grants none of that authority. Original deadlines,
+redacted denials, descendant-context reentry and late-result disclosure fences
+match admitted Group Create, including invalid calls to this entry point from
+the gate. The gate must honor its context, retain no invocation state and start
+no detached work. This selection adds no credential verifier, quota owner,
+storage, HTTP route or public HTTP `Idempotency-Key` extension. Ordinary execution
+and other operation selections are unchanged.
+
 `UsersService.ExecuteAdmittedCreate(ctx, request, gate)` separately selects
 `UserCreate` with a required synchronous trusted gate. Existing bounded JSON,
 schema, target and query validation, actual bearer authentication and operation
