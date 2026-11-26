@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Suppress resource locations on Bulk errors for unsupported methods,
+  without changing the planned dependencies or response-size bound.
+
 - Expose the normalized, optional `scimType` from a protocol error without
   changing its JSON or exposing private diagnostics.
 

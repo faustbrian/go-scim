@@ -39,8 +39,9 @@ var ErrBulkIncomplete = errors.New("scim: bulk checkpoints incomplete")
 // BulkChildResult is the retained, safe semantic result for one original
 // operation. Only succeeded or failed children may carry result fields.
 // Only a persisted skipped child may carry the fail-on-errors skip reason.
-// A processed child with a symbolic target needs its resolved ResourceID even
-// on failure. A failed create must not carry its preallocated ID here.
+// A processed child with a recognized method and a symbolic target needs its
+// resolved ResourceID even on failure. Leave ResourceID empty for failed creates
+// and failed children with unsupported methods.
 type BulkChildResult struct {
 	Status     BulkChildStatus
 	SkipReason BulkSkipReason
@@ -249,6 +250,9 @@ func (p BulkResponsePlan) wireChild(i int, r BulkChildResult) ([]byte, bool, err
 		return nil, false, failure(500, "")
 	}
 	shape := p.ops[i]
+	// parseBulkOperation retains usable targets for unknown methods, not a
+	// declared resource action that can authorize target disclosure.
+	recognizedMethod := slicesContains([]string{"POST", "PUT", "PATCH", "DELETE"}, shape.method)
 	w := bulkWireResult{Method: shape.method, BulkID: shape.bulkID, Status: strconv.Itoa(r.Code)}
 	resourceID := r.ResourceID
 	if r.Status == BulkChildSucceeded {
@@ -261,11 +265,14 @@ func (p BulkResponsePlan) wireChild(i int, r BulkChildResult) ([]byte, bool, err
 		if r.Code < 400 || w.Error.StatusCode() != r.Code || r.Version != "" || shape.method == "POST" && resourceID != "" {
 			return nil, false, failure(500, "")
 		}
-		if resourceID == "" {
+		if !recognizedMethod && resourceID != "" {
+			return nil, false, failure(500, "")
+		}
+		if recognizedMethod && resourceID == "" {
 			resourceID = shape.literalID
 		}
 	}
-	if shape.symbolicID && resourceID == "" {
+	if recognizedMethod && shape.symbolicID && resourceID == "" {
 		return nil, false, failure(500, "")
 	}
 	if resourceID != "" {
