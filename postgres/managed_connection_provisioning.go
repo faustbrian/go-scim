@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/subtle"
+	"strconv"
 	"time"
 
 	authentication "github.com/faustbrian/go-authentication/v2"
@@ -13,6 +14,10 @@ import (
 )
 
 func (w *managedConnectionWriter) provisionedService(pool *database.Pool, scope scim.ConnectionScope, credentialID identity.SubjectID, digest [32]byte, expiry time.Time, mappings scim.MappingSet) (*Service, error) {
+	return w.provisionedVersionService(pool, scope, credentialID, digest, expiry, mappings, 1)
+}
+
+func (w *managedConnectionWriter) provisionedVersionService(pool *database.Pool, scope scim.ConnectionScope, credentialID identity.SubjectID, digest [32]byte, expiry time.Time, mappings scim.MappingSet, version uint64) (*Service, error) {
 	if w == nil || digest == ([32]byte{}) || !managedBearerInputsValid(scope, credentialID, w.config.CredentialKey) {
 		return nil, ErrInvalidConfiguration
 	}
@@ -24,7 +29,7 @@ func (w *managedConnectionWriter) provisionedService(pool *database.Pool, scope 
 		TenantID: scope.TenantID, OrganizationID: scope.OrganizationID,
 		ProviderID: string(scope.ProviderID), ConnectionID: string(scope.ProviderConnectionID),
 	}
-	c.ConnectionVersion = 1
+	c.ConnectionVersion = version
 	c.CredentialExpiresAt = expiry.UTC()
 	// Managed mappings are the selected profile, not an overlay on the trusted
 	// template. An omitted displayName must not retain the template's mapping.
@@ -48,7 +53,7 @@ func (w *managedConnectionWriter) provisionedService(pool *database.Pool, scope 
 			return managedBearerDigest(scope, credentialID, key, candidate), true
 		},
 	}
-	return NewService(pool, c, w.config.Keyring)
+	return newService(pool, c, w.config.Keyring)
 }
 
 const managedRemoveMembership = "remove-membership"
@@ -82,7 +87,8 @@ func (s *ManagedConnectionService) loadManagedProvisioning(ctx context.Context, 
 	if err != nil {
 		return nil, managedConnectionReadError(ctx, err)
 	}
-	if version != "1" || policy != managedRemoveMembership || storedCredential != string(credentialID) || len(digestWire) != 32 || len(profileWire) != 32 || !now.Before(expiry) {
+	generation, parseErr := strconv.ParseUint(version, 10, 64)
+	if parseErr != nil || generation == 0 || policy != managedRemoveMembership || storedCredential != string(credentialID) || len(digestWire) != 32 || len(profileWire) != 32 || !now.Before(expiry) {
 		return nil, identity.ForbiddenError{}
 	}
 	writer := s.writer()
@@ -93,7 +99,7 @@ func (s *ManagedConnectionService) loadManagedProvisioning(ctx context.Context, 
 	if err != nil {
 		return nil, identity.ForbiddenError{}
 	}
-	service, err := writer.provisionedService(s.pool, scope, credentialID, [32]byte(digestWire), expiry, mappings)
+	service, err := writer.provisionedVersionService(s.pool, scope, credentialID, [32]byte(digestWire), expiry, mappings, generation)
 	if err != nil {
 		return nil, identity.ForbiddenError{}
 	}

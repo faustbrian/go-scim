@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Rotate managed connection bearers through an exact server-prepared command
+  with current administrator authority and zero predecessor overlap. Commit
+  the successor digest, version, protected audit and outbox together; recover
+  original metadata without revealing bearer material again.
+
 - Add explicit admitted User Get/List for an issued managed connection bearer.
   Bind the selected native service-account client and tenant after current
   authentication and authorization, using the root protocol's synchronous gate,

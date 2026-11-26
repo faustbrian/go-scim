@@ -43,6 +43,27 @@ its bearer once; retry, Get and List return only the safe record. Keep the
 bearer with the exact directory provider and use it with
 `ExecuteManagedProvisioning` for User Create, Get, List and conditional Delete.
 
+For managed bearer rotation, call `PrepareConnectionRotate` with the current
+administrator authentication, connection ID and expected version, then retain
+its opaque `identity.Command`. Pass that exact command and the same target and
+version to `ConnectionRotate` with current administrator authentication. Neither
+entry point accepts a client `Idempotency-Key`. Preparation retains the original
+nonsecret input in the kernel's existing canonical POST mapping; it does not
+withdraw or issue a bearer. The original authority deadline is not renewed by
+retrying preparation.
+
+Only an invocation that newly commits the rotation receives its successor
+bearer. Keep it at the provider's secret boundary. The predecessor credential
+is revoked with zero overlap in that same transaction, alongside the connection
+version, protected audit and lifecycle outbox event. The result names the exact
+previous credential and its `PreviousBearerRevoked` disposition. A same-command
+retry or recovery after an unknown commit returns only the original connection
+metadata and disposition, never a bearer. Rotation preserves existing Users,
+organization membership contributions and mappings. It does not enroll or alter
+configured version-one credentials, install HTTP routes, or enable other
+connection lifecycle operations. No new SCIM migration is required; the existing
+kernel request-key/prepared-input histories must already be installed.
+
 For an explicit admitted read, select `ExecuteManagedAdmittedRead` with that
 issued bearer, the exact tenant and a nonnil `scim.ProtocolAdmission` gate.
 Only User Get and List are selected. The gate runs once after current native

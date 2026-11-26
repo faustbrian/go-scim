@@ -36,7 +36,8 @@ import (
 // change it when those semantics change. It is configuration identity, not a
 // permission grant. Original profiles/keys must remain available for recovery.
 // ConnectionVersion is exactly one in this create-only configured profile;
-// snapshot import and connection lifecycle successors are not selected.
+// snapshot import is not selected. Managed lifecycle successors are composed
+// privately from their exact persisted version, never through NewService.
 // GlobalAuthorityID selects the exact existing kernel deployment authority;
 // missing/disabled tenant authority is never bootstrapped by this adapter.
 type Config struct {
@@ -101,11 +102,20 @@ func (Service) MarshalJSON() ([]byte, error) { return nil, ErrInvalidConfigurati
 // protects original prepared input under the existing kernel request mapping.
 // There is no adapter-owned connection lifecycle or caller-supplied domain store.
 func NewService(pool *database.Pool, c Config, keys *keyring.Provider) (*Service, error) {
+	if c.ConnectionVersion != 1 {
+		return nil, ErrInvalidConfiguration
+	}
+	return newService(pool, c, keys)
+}
+
+// Managed callers supply an already validated exact durable generation. Keep
+// that selection private so configured credentials cannot enroll successors.
+func newService(pool *database.Pool, c Config, keys *keyring.Provider) (*Service, error) {
 	bad := func() (*Service, error) { return nil, ErrInvalidConfiguration }
 	if pool == nil || pool.Raw() == nil || keys == nil {
 		return bad()
 	}
-	if c.Credential.lookup == nil || c.ConnectionVersion != 1 || c.Authorization == nil || c.PolicyVersion == 0 {
+	if c.Credential.lookup == nil || c.ConnectionVersion == 0 || c.Authorization == nil || c.PolicyVersion == 0 {
 		return bad()
 	}
 	if c.Fields == nil || c.FieldSchema.Validate() != nil || c.IntentKey == ([32]byte{}) {
