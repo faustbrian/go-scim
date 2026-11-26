@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add opt-in native mixed Bulk for acyclic User creates and supported Group
+  operations, with typed forward references and replay from original commands.
+- Settle a started acyclic child as a retained 503 after the kernel confirms
+  rollback, without reexecuting the aborted command or counting an unknown.
+
 - Settle external predecessors of all-Group Bulk create cycles as a whole.
   Resume after success, retain an audited skip for each member at cutoff, or
   record each original dependency failure without applying any Group.

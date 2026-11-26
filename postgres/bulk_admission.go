@@ -18,11 +18,12 @@ import (
 // Group projection. It does not enable discovery or an HTTP route.
 // Its pool and authority remain borrowed from the ordinary Group service.
 type GroupBulkService struct {
-	native   *Service
-	groups   *scim.GroupsService
-	request  scim.BulkPolicy
-	response scim.BulkResponsePolicy
-	profile  [32]byte
+	native          *Service
+	groups          *scim.GroupsService
+	request         scim.BulkPolicy
+	response        scim.BulkResponsePolicy
+	profile         [32]byte
+	allowUserCreate bool
 }
 
 // NewGroupBulkService performs no I/O. Install BulkAdmissionMigrationSource
@@ -161,16 +162,27 @@ func (s *GroupBulkService) prepareBulkGraph(ctx context.Context, request BulkAdm
 		return preparedBulkGraph{}, err
 	}
 	children := plan.Operations()
+	components := plan.Components()
 	if ordinal != nil && (*ordinal < 0 || *ordinal >= len(children)) {
 		return preparedBulkGraph{}, scim.NewError(400, "invalidValue")
 	}
 	for _, child := range children {
-		if child.Target.ResourceType == "User" {
+		if child.Target.ResourceType == "User" && (!s.allowUserCreate || child.Method != "POST") {
 			return preparedBulkGraph{}, scim.NewError(501, "")
 		}
 	}
+	for _, component := range components {
+		if !component.Cyclic {
+			continue
+		}
+		for _, index := range component.Operations {
+			if children[index].Target.ResourceType == "User" {
+				return preparedBulkGraph{}, scim.NewError(501, "")
+			}
+		}
+	}
 	p := &nativePhase{service: s.native, admission: *i, bulk: &bulkAdmissionPhase{
-		children: children, components: plan.Components(), cutoff: plan.FailOnErrors(), maximum: response.MaximumBytes(), profile: s.profile,
+		children: children, components: components, cutoff: plan.FailOnErrors(), maximum: response.MaximumBytes(), profile: s.profile,
 	}}
 	return preparedBulkGraph{phase: p, plan: plan, response: response}, nil
 }

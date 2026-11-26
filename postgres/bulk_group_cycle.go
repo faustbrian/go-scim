@@ -61,17 +61,17 @@ func (s *GroupBulkService) executeGroupCreateCycle(ctx context.Context, request 
 	componentIDs := make(map[string]string, len(members))
 	allocated := make(map[int]string, len(rows))
 	for i, child := range parent.bulk.children {
-		if child.Error == nil && bulkCreatesGroup(child) {
+		if child.Error == nil && bulkCreatesResource(child) {
 			allocated[i] = rows[i].Resource
 		}
 	}
 	for i, index := range group.Operations {
 		row := rows[index]
-		if allocated[index] == "" || row.ComponentID != selected.ComponentID || row.ComponentOrder != selected.ComponentOrder || !row.Cyclic {
+		if !bulkCreatesGroup(parent.bulk.children[index]) || allocated[index] == "" || row.ComponentID != selected.ComponentID || row.ComponentOrder != selected.ComponentOrder || !row.Cyclic {
 			return scim.BulkChildResult{}, scim.NewError(501, "")
 		}
 		componentIDs[row.Command] = row.Resource
-		members[i] = newBulkGroupExecution(parent.original, row, scim.GroupCreate, row.Resource, "")
+		members[i] = newBulkChildExecution(parent.original, row, scim.GroupCreate, row.Resource, "")
 	}
 	cycle, err := newBulkCycleDependency(members)
 	if err != nil {
@@ -134,7 +134,7 @@ func (s *GroupBulkService) executeGroupCreateCycle(ctx context.Context, request 
 }
 
 func (s *GroupBulkService) readGroupCycleMember(ctx context.Context, parent *nativePhase, row bulkChildRow) (scim.BulkChildResult, error) {
-	phase := newBulkGroupExecution(parent.original, row, scim.GroupCreate, row.Resource, "")
+	phase := newBulkChildExecution(parent.original, row, scim.GroupCreate, row.Resource, "")
 	result, _, err := s.native.readBulkChild(ctx, phase)
 	if err != nil {
 		return scim.BulkChildResult{}, err

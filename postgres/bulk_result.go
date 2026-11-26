@@ -57,16 +57,19 @@ func (s *GroupBulkService) ReadResult(ctx context.Context, request BulkAdmission
 		if result.Status == scim.BulkChildSkipped {
 			continue
 		}
-		op, target := p.bulk.selectGroupChild(ordinal, targets)
+		op, target := p.bulk.selectChild(ordinal, targets)
 		if op == "" {
 			return nil, identity.UnavailableError{}
 		}
 		key := disclosure{op: op, target: target}
 		if _, ok := authorized[key]; !ok {
-			if err := s.native.decide(ctx, string(op), target, "identity.scim.group"); err != nil {
+			if err := s.native.decide(ctx, string(op), target, bulkChildAuthorizationType(op)); err != nil {
 				return nil, err
 			}
 			authorized[key] = struct{}{}
+		}
+		if err := s.native.checkBulkChildDisclosure(ctx, op, result); err != nil {
+			return nil, err
 		}
 		if result.Status == scim.BulkChildFailed && p.bulk.children[ordinal].Target.BulkID != "" {
 			results[ordinal].ResourceID = target
@@ -121,11 +124,11 @@ func (p *nativePhase) readBulkTerminalCheckpoints(ctx context.Context) ([]scim.B
 			r.cyclic != original.Cyclic || !bytes.Equal(r.fingerprint, original.Fingerprint) {
 			return nil, identity.UnavailableError{}
 		}
-		op, target := p.bulk.selectGroupChild(index, targets)
+		op, target := p.bulk.selectChild(index, targets)
 		if original.Cyclic && op != scim.GroupCreate {
 			op = ""
 		}
-		phase := newBulkGroupExecution(p.original, original, op, target, scim.Version(p.bulk.children[index].Version))
+		phase := newBulkChildExecution(p.original, original, op, target, scim.Version(p.bulk.children[index].Version))
 		result, err := r.result(phase, cutoff)
 		if err != nil && !errors.Is(err, scim.ErrBulkIncomplete) {
 			return nil, err

@@ -37,7 +37,7 @@ SELECT coalesce(json_agg(json_build_object('command_id',command_id,'ordinal',ord
 FROM skipped`
 
 // RecordSCIMBulkChildFailure materializes the original typed denial only after
-// the coordinator has rolled back the Group attempt. Under the same journal,
+// the coordinator has rolled back the resource attempt. Under the same journal,
 // audit and current connection fences, admitted means the aborted attempt's
 // provisional running state and any projection have disappeared.
 func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.Work, failure kernel.FeatureFailureCode) error {
@@ -56,6 +56,14 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 	case kernel.FeatureFailureInvalidGroupMember:
 		status = 400
 	case kernel.FeatureFailureConflict:
+		if !p.group() {
+			return identity.ForbiddenError{}
+		}
+		status = 409
+	case kernel.FeatureFailureUniqueness:
+		if p.intent.Operation != scim.UserCreate || phase.row.Cyclic {
+			return identity.ForbiddenError{}
+		}
 		status = 409
 	case kernel.FeatureFailurePrecondition:
 		if !nativeMutation(p.intent.Operation) || !p.group() {
@@ -84,6 +92,25 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 		return nil
 	}
 	// Appending a large cutoff set can span the original authority expiry.
+	return p.checkCurrent(ctx, w)
+}
+
+// RecordSCIMBulkChildUnavailable settles a definitive dependency-failure
+// Abort, not an uncertain result or a retry attempt. The kernel calls this
+// only after proving rollback and in the original terminal transaction.
+func (p *nativePhase) RecordSCIMBulkChildUnavailable(ctx context.Context, w kernel.Work) error {
+	if p == nil || p.denialOnly != 0 {
+		return identity.ForbiddenError{}
+	}
+	if err := p.checkAcyclicBulkChildScope(w); err != nil {
+		return err
+	}
+	if err := p.checkCurrent(ctx, w); err != nil {
+		return err
+	}
+	if _, err := p.projectBulkChildFailure(ctx, w, 503); err != nil {
+		return err
+	}
 	return p.checkCurrent(ctx, w)
 }
 
@@ -152,7 +179,14 @@ func (p *nativePhase) CheckSCIMBulkChildReconciliation(ctx context.Context, w ke
 }
 
 func (p *nativePhase) checkBulkChildReconciliationScope(w kernel.Work) error {
-	if p == nil || p.service == nil || p.bulk != nil || p.bootstrap || p.bulkChild == nil || !p.group() ||
+	if p == nil || !p.group() {
+		return identity.ForbiddenError{}
+	}
+	return p.checkAcyclicBulkChildScope(w)
+}
+
+func (p *nativePhase) checkAcyclicBulkChildScope(w kernel.Work) error {
+	if p == nil || p.service == nil || p.bulk != nil || p.bootstrap || p.bulkChild == nil || !p.group() && p.intent.Operation != scim.UserCreate ||
 		!nativeCreate(p.intent.Operation) && !nativeMutation(p.intent.Operation) {
 		return identity.ForbiddenError{}
 	}
@@ -163,7 +197,7 @@ func (p *nativePhase) checkBulkChildReconciliationScope(w kernel.Work) error {
 		return identity.ForbiddenError{}
 	}
 	if binding.CommandID != phase.original.Command || binding.CorrelationID != string(phase.parent) || binding.RecordID != phase.original.ID ||
-		phase.row.Command != string(binding.CommandID) || p.intent.Operation == scim.GroupCreate && phase.row.Resource != binding.RecordID || phase.row.Cyclic {
+		phase.row.Command != string(binding.CommandID) || nativeCreate(p.intent.Operation) && phase.row.Resource != binding.RecordID || phase.row.Cyclic {
 		return identity.ForbiddenError{}
 	}
 	if p.original.Command != phase.original.Command || p.original.ID != phase.original.ID || p.original.Version != phase.original.Version ||

@@ -31,7 +31,8 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 	}
 	p := &nativePhase{service: b.service, admission: *i, intent: intent}
 	if i.bulkChild != nil {
-		if !b.groups || intent.Operation != i.bulkChild.original.Operation || intent.IdempotencyKey != "" ||
+		if !b.groups && (intent.Operation != scim.UserCreate || i.bulkChild.row.Cyclic) ||
+			intent.Operation != i.bulkChild.original.Operation || intent.IdempotencyKey != "" ||
 			intent.IfMatch != i.bulkChild.ifMatch || !nativeCreate(intent.Operation) && intent.ResourceID != i.bulkChild.original.ID {
 			return scim.PreparedWrite{}, identity.ForbiddenError{}
 		}
@@ -223,6 +224,7 @@ func (b *protocolBridge) executeResourceWrite(ctx context.Context, p *nativePhas
 		}
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, failure
 	}
+	p.noteBulkUnavailable(result, err)
 	var conflict identity.ConflictError
 	if (result.Outcome == identity.CommitOutcomeNotCommitted || result.Outcome == identity.CommitOutcomeConflict) && errors.As(err, &conflict) {
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, scim.ErrConflict
@@ -279,6 +281,7 @@ func (b *protocolBridge) commitDelete(ctx context.Context, p *nativePhase, prepa
 		}
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, failure
 	}
+	p.noteBulkUnavailable(result, err)
 	switch result.Outcome {
 	case identity.CommitOutcomeNotCommitted, identity.CommitOutcomeConflict:
 		return scim.WriteResult{Outcome: scim.WriteOutcomeNotCommitted}, err
@@ -286,6 +289,15 @@ func (b *protocolBridge) commitDelete(ctx context.Context, p *nativePhase, prepa
 		return scim.WriteResult{Outcome: scim.WriteOutcomeInProgress}, nil
 	default:
 		return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, err
+	}
+}
+
+func (p *nativePhase) noteBulkUnavailable(result identity.CommandResult, err error) {
+	var unavailable identity.UnavailableError
+	if p.bulkChild != nil && result.Outcome == identity.CommitOutcomeNotCommitted && errors.As(err, &unavailable) {
+		// ExecuteChild still requires the exact retained checkpoint before
+		// disclosing any result. A plain 503 cannot settle the graph.
+		p.bulkChild.acknowledgedFailure = true
 	}
 }
 

@@ -74,7 +74,7 @@ func (p *nativePhase) prepareBulkRequestVersion(ctx context.Context, b kernel.Re
 			return nil, err
 		}
 		input.Allocations[i].Command = initial
-		if bulkCreatesGroup(child) {
+		if bulkCreatesResource(child) {
 			resource, err := identity.NewSubjectID()
 			if err != nil {
 				return nil, err
@@ -149,7 +149,7 @@ func (p *bulkAdmissionPhase) validAllocation(input bulkPreparedInput, command id
 			return false
 		}
 		commands[allocated.Command] = true
-		if !bulkCreatesGroup(p.children[i]) {
+		if !bulkCreatesResource(p.children[i]) {
 			if allocated.Resource != "" {
 				return false
 			}
@@ -165,4 +165,8 @@ func (p *bulkAdmissionPhase) validAllocation(input bulkPreparedInput, command id
 
 func bulkCreatesGroup(child scim.BulkOperation) bool {
 	return child.Method == "POST" && child.Target.ResourceType == "Group"
+}
+
+func bulkCreatesResource(child scim.BulkOperation) bool {
+	return child.Method == "POST" && (child.Target.ResourceType == "Group" || child.Target.ResourceType == "User")
 }

@@ -356,6 +356,11 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		}
 		return p.applyProjectionMutation(ctx, w)
 	} else {
+		if p.bulkChild != nil {
+			if err := p.startAcyclicBulkChild(ctx, w); err != nil {
+				return identity.FeatureReceipt{}, err
+			}
+		}
 		username, err := scim.UsernameComparisonKey(p.resource.Attributes["userName"].(string))
 		if err != nil {
 			return identity.FeatureReceipt{}, identity.InvalidInputError{Field: "scim_username"}
@@ -382,6 +387,9 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		}
 		if count != 1 {
 			return identity.FeatureReceipt{}, identity.ConflictError{}
+		}
+		if p.bulkChild != nil {
+			return p.finishBulkCreate(ctx, w, identity.FeatureReceipt{Operation: p.operation(), AfterVersion: 1})
 		}
 	}
 	return identity.FeatureReceipt{Operation: p.operation(), AfterVersion: 1}, nil

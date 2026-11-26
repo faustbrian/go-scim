@@ -50,6 +50,24 @@ An optional key aliases that parent; using it for different input conflicts.
 Admission itself executes no child and is not a Bulk response. Ordinary Users
 and Groups, HTTP routing and discovery still do not enable Bulk.
 
+`NewBulkService` explicitly selects mixed native Bulk on the same configured
+connection. Use the same migrations as for Group Bulk and the existing native
+Users migration. It accepts acyclic `POST /Users` alongside the supported
+Group operations. A Group can refer forward to a User by typed `bulkId`; it
+cannot apply until the original User command commits. User mutations and
+cycles containing Users remain unsupported. The Group-only constructor does
+not accept a User operation. Select mixed Bulk only when every executor for
+that connection can resume mixed requests.
+
+The User record, projection, child checkpoint, protected audit and lifecycle
+effect commit together. A duplicate username retains the original `409` with
+`scimType=uniqueness`. If a started acyclic child rolls back and its abort is
+confirmed, the original child retains `503` and no successful projection or
+lifecycle effect. A caller's unknown outcome gives no evidence of a child
+failure. An exact retry of an aborted child reads its terminal result instead
+of repeating the write. A dependent child retains `424` only after its
+dependency is confirmed to have failed.
+
 Install `BulkChildExecutionMigrationSource` to call `ExecuteChild` with the
 exact original request and a zero-based operation index. This selection runs
 acyclic Group children in the retained dependency order. Install the further
