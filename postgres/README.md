@@ -70,7 +70,12 @@ protected denial records its result
 and counts once, without a Group projection or success outbox event. At a
 positive `failOnErrors` threshold, the failure transaction also skips every
 remaining admitted child and appends one protected audit per skip. A skipped
-child has no operation status, resource identity or version. Unknown outcomes
+child has no operation status, resource identity or version. For an acyclic
+Group child, a predecessor without a known result retains a dependency block,
+not an operation failure. Re-select the child when the predecessor settles.
+A confirmed failed dependency retains 424 under the original child and counts
+once. A successful resolution resumes the original child, or records an
+audited skip if cutoff is already active. Unknown outcomes
 do not count as failures; retry the same request and index to recover the
 checkpoint when it is known. Call `ReadResult` with the exact original request
 to read the complete response once all retained children have settled. The

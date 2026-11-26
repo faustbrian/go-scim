@@ -304,11 +304,13 @@ func measureBulkGroupMutationQueries(t *testing.T, ctx context.Context, connecti
 		name     string
 		ordinal  int
 		blocked  bool
+		resumed  bool
 		retained bool
 		expired  bool
 	}{
 		{name: "first input ready", ordinal: 0},
 		{name: "late input ready", ordinal: 999},
+		{name: "previously blocked input now ready", ordinal: 999, resumed: true},
 		{name: "late input blocked", ordinal: 999, blocked: true},
 		{name: "input already retained", ordinal: 999, retained: true},
 		{name: "input admission expired", ordinal: 999, expired: true},
@@ -318,7 +320,11 @@ func measureBulkGroupMutationQueries(t *testing.T, ctx context.Context, connecti
 			var elapsed [3]time.Duration
 			for sample := range elapsed {
 				withBulkMutationPlanTransaction(t, ctx, connection, func(tx pgx.Tx) {
-					if _, err := tx.Exec(ctx, `UPDATE scim.bulk_children SET status='admitted',result_code=NULL,result_resource_id=NULL,result_version=NULL WHERE parent_id=$1 AND ordinal=$2`, args[0], args[1]); err != nil {
+					status := "admitted"
+					if test.resumed {
+						status = "dependency-blocked"
+					}
+					if _, err := tx.Exec(ctx, `UPDATE scim.bulk_children SET status=$3,result_code=NULL,result_resource_id=NULL,result_version=NULL WHERE parent_id=$1 AND ordinal=$2`, args[0], args[1], status); err != nil {
 						t.Fatal(err)
 					}
 					if test.blocked {

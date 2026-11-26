@@ -83,7 +83,16 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 		return s.executeGroupCreateCycle(ctx, request, parent, plan, rows, ordinal)
 	}
 	if !ready {
-		return result, identity.ConflictError{}
+		checkpoint, ready, err = s.resolveBulkDependency(ctx, parent, phase)
+		if err != nil {
+			return result, err
+		}
+		if checkpoint.Status == scim.BulkChildSucceeded || checkpoint.Status == scim.BulkChildFailed || checkpoint.Status == scim.BulkChildSkipped {
+			return checkpoint, nil
+		}
+		if !ready {
+			return result, identity.ConflictError{}
+		}
 	}
 	allocated := make(map[int]string)
 	for i, declared := range parent.bulk.children {
@@ -183,6 +192,10 @@ func (p *nativePhase) hasStaleBulkPrecondition() bool {
 }
 
 func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
+	if code == kernel.FeatureFailureSCIMBulkDependency {
+		return p.bulkChild != nil && p.group() && !p.bulkChild.row.Cyclic &&
+			len(p.bulkChild.row.Dependencies) > 0 && p.original == p.bulkChild.original && p.intent.Operation == p.original.Operation
+	}
 	if p.bulkChild == nil || !p.group() || !nativeMutation(p.intent.Operation) || p.intent.ResourceID != p.original.ID || p.original.Operation != p.intent.Operation {
 		return false
 	}
@@ -298,7 +311,7 @@ const bulkChildStart = `UPDATE scim.bulk_children AS child SET status='running'
 FROM scim.bulk_requests AS parent
 WHERE parent.parent_id=child.parent_id AND child.parent_id=$1 AND child.ordinal=$2
  AND child.command_id=$3 AND child.request_fingerprint=$4 AND child.resource_id=$5
- AND child.component_order=$6 AND NOT child.cyclic AND child.status='admitted'
+ AND child.component_order=$6 AND NOT child.cyclic AND child.status IN ('admitted','dependency-blocked')
  AND ` + bulkChildReady
 
 const bulkChildSucceed = `UPDATE scim.bulk_children SET status='succeeded',result_code=201,result_resource_id=$5,result_version=$7
@@ -339,6 +352,9 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 	if status == "admitted" && code == nil && resource == nil && version == nil {
 		return scim.BulkChildResult{Status: scim.BulkChildAdmitted}, ready, nil
 	}
+	if status == "dependency-blocked" && code == nil && resource == nil && version == nil {
+		return scim.BulkChildResult{Status: scim.BulkChildDependencyBlocked}, ready, nil
+	}
 	if status == "skipped" && !ready && code == nil && resource == nil && version == nil {
 		// The graph schema permits only the fail-on-errors reason for skipped rows.
 		return scim.BulkChildResult{Status: scim.BulkChildSkipped, SkipReason: scim.BulkSkipFailOnErrors}, false, nil
@@ -347,7 +363,8 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 }
 
 func (p *bulkChildExecution) failureResult(code int) (scim.BulkChildResult, bool) {
-	if p.row.Cyclic && p.original.Operation == scim.GroupCreate && code == 424 {
+	if code == 424 && (p.row.Cyclic && p.original.Operation == scim.GroupCreate ||
+		!p.row.Cyclic && len(p.row.Dependencies) > 0 && groupOperation(p.original.Operation)) {
 		return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true
 	}
 	return bulkGroupFailureResult(p.original.Operation, code)

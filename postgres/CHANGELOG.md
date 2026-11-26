@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Retain acyclic Group Bulk dependency blocks and definitive 424 results. Resume
+  after predecessor success, or retain an audited skip if cutoff is already active.
+
 - Execute an all-Group create cycle atomically through an original child.
   Replays retain all original successes or all protected dependency failures,
   including audited skips once the parent reaches its error threshold.

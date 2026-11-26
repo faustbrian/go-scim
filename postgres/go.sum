@@ -97,8 +97,8 @@ github.com/faustbrian/go-identity/password/postgres v0.0.0-20261028082559-7ca5d4
 github.com/faustbrian/go-identity/password/postgres v0.0.0-20261028082559-7ca5d4db76d2/go.mod h1:RONjPqk90ksuQ4voGAH8SOCCd0SQ/TQWLvu3kvScflw=
 github.com/faustbrian/go-identity/phone v0.0.0-20261020215141-387cc56b91f6 h1:D+H1oYaOCQYGuvltxahVnzZCmVQTd7s5jzdV3RLkrUc=
 github.com/faustbrian/go-identity/phone v0.0.0-20261020215141-387cc56b91f6/go.mod h1:rQXIEiPXU/DMLt80tkafJnol/ayyUHFoS2ya3hVR1nE=
-github.com/faustbrian/go-identity/postgres v0.0.0-20261126062407-0ae1f3710079 h1:GBqCVPqHIM+6/RzMYfBymMcV22POiKy8aJgP+Xh8BjE=
-github.com/faustbrian/go-identity/postgres v0.0.0-20261126062407-0ae1f3710079/go.mod h1:2se0pU/UH8LwiF7kP2TWfBCYFYuJq1TXPb47soXnwRM=
+github.com/faustbrian/go-identity/postgres v0.0.0-20261126064149-ff82b7e94fbf h1:R72ILsPW5PpcjImOTSkHN1H2DkuGQu6gAdgiiPTzjXU=
+github.com/faustbrian/go-identity/postgres v0.0.0-20261126064149-ff82b7e94fbf/go.mod h1:2se0pU/UH8LwiF7kP2TWfBCYFYuJq1TXPb47soXnwRM=
 github.com/faustbrian/go-identity/reference v0.0.0-20261018031204-02c6195bd789 h1:AcnrkJ3z7oITrIUc6nSJX3OwLitJek2bRJDRu+eE7SQ=
 github.com/faustbrian/go-identity/reference v0.0.0-20261018031204-02c6195bd789/go.mod h1:O/hmm6Lqqb8SknW6SGEhv+EornZU+sR8KVKCXK5h+uY=
 github.com/faustbrian/go-identity/risk v0.0.0-20261028092233-945b17fc88c4 h1:QQNah/VhUsjqLQ7knO236HHpK/x2gC1m6aPUKTOtFr8=

@@ -14,7 +14,7 @@ const retainBulkMutationInput = `UPDATE scim.bulk_children AS child SET group_mu
 FROM scim.bulk_requests AS parent
 WHERE parent.parent_id=child.parent_id AND child.parent_id=$1 AND child.ordinal=$2
  AND child.command_id=$3 AND child.request_fingerprint=$4 AND child.resource_id=$5
- AND child.component_order=$6 AND NOT child.cyclic AND child.status='admitted'
+ AND child.component_order=$6 AND NOT child.cyclic AND child.status IN ('admitted','dependency-blocked')
  AND child.group_mutation_input IS NULL AND clock_timestamp()<$8 AND ` + bulkChildReady
 
 // prepareBulkMutationOriginal freezes one eligible child, not the entire graph.

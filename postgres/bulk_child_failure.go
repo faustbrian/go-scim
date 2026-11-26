@@ -16,7 +16,7 @@ const bulkChildFail = `WITH failed AS (
  FROM scim.bulk_requests AS parent
  WHERE parent.parent_id=child.parent_id AND child.parent_id=$1 AND child.ordinal=$2
   AND child.command_id=$3 AND child.request_fingerprint=$4 AND child.resource_id=$5
-  AND child.component_order=$6 AND NOT child.cyclic AND child.status='admitted'
+  AND child.component_order=$6 AND NOT child.cyclic AND child.status IN ('admitted','dependency-blocked')
   AND ` + bulkChildReady + `
  RETURNING child.parent_id
 )
@@ -48,6 +48,11 @@ func (p *nativePhase) RecordSCIMBulkChildFailure(ctx context.Context, w kernel.W
 	}
 	var status int
 	switch failure {
+	case kernel.FeatureFailureSCIMBulkDependency:
+		if p.denialOnly != failure || !p.bulkDenialMatches(failure) {
+			return identity.ForbiddenError{}
+		}
+		return p.recordBulkDependencyFailure(ctx, w)
 	case kernel.FeatureFailureInvalidGroupMember:
 		status = 400
 	case kernel.FeatureFailureConflict:

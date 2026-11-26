@@ -104,8 +104,9 @@ func TestNativeGroupBulkChildExecutionCommitsInPlanOrderAndReplaysOriginal(t *te
 		t.Fatal("caller executed a dependent child before its persisted predecessor", err)
 	}
 	var projections, advanced int
-	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT (SELECT count(*) FROM scim.groups),(SELECT count(*) FROM scim.bulk_children WHERE status<>'admitted')`).Scan(&projections, &advanced); err != nil || projections != 0 || advanced != 0 {
-		t.Fatal("premature child execution changed projection or checkpoint", err)
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT (SELECT count(*) FROM scim.groups),
+ (SELECT count(*) FROM scim.bulk_children WHERE NOT (ordinal=1 AND status='dependency-blocked' OR ordinal=0 AND status='admitted'))`).Scan(&projections, &advanced); err != nil || projections != 0 || advanced != 0 {
+		t.Fatal("premature selection must retain only the exact dependency block", err)
 	}
 
 	created, err := service.ExecuteChild(f.ctx, request, 0)
@@ -117,7 +118,7 @@ func TestNativeGroupBulkChildExecutionCommitsInPlanOrderAndReplaysOriginal(t *te
 		t.Fatal("first child projected a different admitted request")
 	}
 	var secondStatus string
-	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT (SELECT count(*) FROM scim.groups),status FROM scim.bulk_children WHERE parent_id=$1 AND ordinal=1`, string(parent.CommandID)).Scan(&projections, &secondStatus); err != nil || projections != 1 || secondStatus != "admitted" {
+	if err := f.pool.Raw().QueryRow(f.ctx, `SELECT (SELECT count(*) FROM scim.groups),status FROM scim.bulk_children WHERE parent_id=$1 AND ordinal=1`, string(parent.CommandID)).Scan(&projections, &secondStatus); err != nil || projections != 1 || secondStatus != "dependency-blocked" {
 		t.Fatal("first child execution also executed its successor", err)
 	}
 	if replayed, err := service.ExecuteChild(f.ctx, request, 0); err != nil || replayed != created {

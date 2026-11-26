@@ -21,6 +21,7 @@ type nativePhase struct {
 	service     *Service
 	bulk        *bulkAdmissionPhase
 	bulkChild   *bulkChildExecution
+	dependency  *bulkDependencyProbe
 	denialOnly  kernel.FeatureFailureCode
 	bootstrap   bool
 	admission   invocation
@@ -274,7 +275,13 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 	if err := w.RequireFeatureCommand(ctx, p, command); err != nil {
 		return identity.FeatureReceipt{}, err
 	}
-	if err := p.checkCurrent(ctx, w); err != nil {
+	check := p.checkCurrent
+	if p.denialOnly == kernel.FeatureFailureSCIMBulkDependency {
+		// The exact original graph can be settled under current authority.
+		// This no-effect plan must not refresh the original execution window.
+		check = func(ctx context.Context, w kernel.Work) error { return p.checkAdmission(ctx, w, p.admission) }
+	}
+	if err := check(ctx, w); err != nil {
 		return identity.FeatureReceipt{}, err
 	}
 	c := p.service.config()
@@ -295,6 +302,12 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 			if p.denialOnly != 0 {
 				if !p.bulkDenialMatches(p.denialOnly) {
 					return identity.FeatureReceipt{}, identity.ForbiddenError{}
+				}
+				if p.denialOnly == kernel.FeatureFailureSCIMBulkDependency {
+					state, err := readBulkDependency(ctx, w, p.bulkChild)
+					if err != nil || !state.canFail() {
+						return identity.FeatureReceipt{}, identity.UnavailableError{}
+					}
 				}
 				return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, p.denialOnly)
 			}
