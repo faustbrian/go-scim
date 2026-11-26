@@ -77,6 +77,21 @@ honor its context and retain no invocation or detached work. Ordinary managed
 provisioning stays unchanged; this adds neither a quota engine nor HTTP routes,
 search, discovery, Groups or writes to the admitted selection.
 
+`ExecuteManagedAdmittedCreate` separately selects only User Create with the
+issued managed bearer, exact tenant and required `scim.ProtocolAdmission` gate.
+Existing root request/schema validation and current native bearer/operation
+authority precede its once-per-attempt gate, before mapping or command effects.
+The gate receives only the selected native service's configured service-account
+client and tenant. Denial, unavailability, cancellation or deadline expiry
+produces no protected effect; a bounded positive quota wait retains its redacted
+429 retry metadata. A later allowed attempt uses the same canonical native
+write and original command/replay authority, rather than a new admission owner.
+Root original deadlines and late-result disclosure fencing remain controlling.
+The gate is synchronous and must honor its context, retain no invocation or
+context and start no detached work. This adds no limiter, HTTP route, SQL or
+migration, other selected operation, or change to ordinary managed provisioning
+or admitted reads.
+
 Managed Delete uses the connection's persisted `RemoveMembership` policy. The
 same transaction tombstones the selected SCIM User resource and retires only
 its current organization membership contribution. The last active directory

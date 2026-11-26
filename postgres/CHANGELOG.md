@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit admitted User Create for an issued managed bearer and exact
+  configured native client. Validate and authorize before charging the gate,
+  then retain original native writes/replay, deadlines and redacted denials.
+  Ordinary provisioning, admitted reads, SQL and HTTP routing are unchanged.
+
 - Rotate managed connection bearers through an exact server-prepared command
   with current administrator authority and zero predecessor overlap. Commit
   the successor digest, version, protected audit and outbox together; recover

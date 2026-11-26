@@ -71,3 +71,42 @@ func (s *ManagedConnectionService) ExecuteManagedAdmittedRead(ctx context.Contex
 		})
 	})
 }
+
+// ExecuteManagedAdmittedCreate selects only User Create for an issued managed
+// bearer in the exact tenant. A nonnil synchronous admission gate is required;
+// other operations return 501 and missing composition returns 503. Ordinary
+// provisioning and admitted reads retain their existing behavior.
+//
+// The request and gate are borrowed only during this call. Existing root request
+// and schema validation, current native bearer authentication and operation
+// authorization precede the gate. It receives the exact configured native
+// service-account client and tenant, never request-selected actor authority.
+// The root owns once-per-attempt admission before mapping or command effects,
+// redacted denials/retry metadata, original deadlines and disclosure fencing.
+// Store-owned original commands, write authority and replay remain unchanged.
+// The gate must honor ctx, retain no invocation/context and start no detached
+// work. No limiter, HTTP route, other write or managed lifecycle is selected.
+func (s *ManagedConnectionService) ExecuteManagedAdmittedCreate(ctx context.Context, tenant identity.TenantID, request scim.Request, admit scim.ProtocolAdmission) (scim.Response, error) {
+	if s == nil || ctx == nil || s.writer == nil || admit == nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	if request.Operation != scim.UserCreate {
+		return scim.Response{}, scim.NewError(501, "")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.config.MaximumDuration)
+	defer cancel()
+	source, err := s.loadManagedProvisioning(ctx, tenant, request.Credential)
+	if err != nil {
+		var denied identity.ForbiddenError
+		if errors.As(err, &denied) {
+			return scim.Response{}, scim.NewError(401, "")
+		}
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	return source.executeProtocol(ctx, request, func(ctx context.Context, request scim.Request) (scim.Response, error) {
+		return source.protocol.ExecuteAdmittedCreate(ctx, request, func(ctx context.Context) *scim.Error {
+			configured := source.config()
+			return admit(ctx, scim.ProtocolClient{ID: configured.ActorID, TenantID: configured.Scope.TenantID})
+		})
+	})
+}
