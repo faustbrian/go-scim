@@ -128,6 +128,27 @@ must exist in the exact connection at atomic commit; references are never
 traversed or modified. No SQL, migration, replay owner or HTTP route is added;
 User/Bulk and ordinary Group request-key behavior remain unchanged.
 
+`ExecuteManagedAdmittedGroupPatch(ctx, tenant, request, maximumMembers, gate)`
+separately selects only conditional Group Patch for the issued managed bearer
+and exact tenant, rejecting caller request keys. The same trusted member ceiling
+and existing native Groups migration/store apply. Current bearer/operation
+authority, bounded Group PatchOp and required strong `If-Match` validation precede
+the required gate's one invocation, before canonical preparation, mapping or
+protected effects. The gate receives only the configured native client and
+tenant, must honor its original context, and must retain no invocation/context
+or start detached work. Root deadlines, redacted denials/retry metadata, reentry
+and final disclosure fences remain controlling.
+Ordered patches preserve typed member integrity and fresh remove/add semantics;
+referenced resources are never traversed or modified. The existing coordinator
+retains one original command for the canonical scoped request in a separate
+Group Patch domain. Equivalent headerless retry preserves its original Group,
+ETag and no-op metadata even after a later write, without another command, audit
+or outbox effect. Exact no-op keeps the projection generation unchanged while
+retaining its original command, audit and outbox event. Native CAS and durable
+denial audits keep their existing owners. No SQL, migration, replay owner or
+HTTP route is added; User/Bulk, Group Replace and ordinary Group request-key
+behavior remain unchanged.
+
 `ExecuteManagedAdmittedCreate` separately selects only User Create with the
 issued managed bearer, exact tenant and required `scim.ProtocolAdmission` gate.
 Existing root request/schema validation and current native bearer/operation

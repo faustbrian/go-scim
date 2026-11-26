@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit admitted conditional Group Patch for issued managed bearers and
+  the exact tenant. Preserve ordered typed member updates, native CAS, exact
+  no-op metadata and denial audits; retain original headerless replay in a
+  separate Group Patch domain without new SQL, migrations or replay ownership.
+  User/Bulk, Group Replace and ordinary Group behavior remain unchanged.
+
 - Add explicit admitted conditional Group Replace for issued managed bearers and
   the exact tenant. Preserve complete replacement, typed member isolation and
   native atomic CAS; retain one original headerless replay in a separate Group

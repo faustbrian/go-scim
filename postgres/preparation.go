@@ -388,18 +388,29 @@ func (p *nativePhase) managedGroupReplace(ctx context.Context) bool {
 	return p.service.managed != nil && !p.bootstrap && p.bulkChild == nil && p.intent.Operation == scim.GroupReplace && ctx.Value(managedGroupReplaceSelectionKey{}) == p.service
 }
 
-// Keep User and Group Replace selection separate from each other and the
-// published PATCH domain. All retain the existing coordinator's immutable
-// original request and journal, never a caller-supplied retry key.
+// Group Patch's headerless selection is invocation-local too, so the ordinary
+// Group and Bulk key policies do not change when this entry point is composed.
+type managedGroupPatchSelectionKey struct{}
+
+func (p *nativePhase) managedGroupPatch(ctx context.Context) bool {
+	return p.service.managed != nil && !p.bootstrap && p.bulkChild == nil && p.intent.Operation == scim.GroupPatch && ctx.Value(managedGroupPatchSelectionKey{}) == p.service
+}
+
+// Keep each selected write's canonical domain separate. All retain the existing
+// coordinator's immutable original request and journal, never a caller key.
 func managedUserReplaceKey(intent scim.WriteIntent) (string, error) {
-	return managedReplaceKey(intent, "scim-managed-user-replace-v1\x00")
+	return managedCanonicalWriteKey(intent, "scim-managed-user-replace-v1\x00")
 }
 
 func managedGroupReplaceKey(intent scim.WriteIntent) (string, error) {
-	return managedReplaceKey(intent, "scim-managed-group-replace-v1\x00")
+	return managedCanonicalWriteKey(intent, "scim-managed-group-replace-v1\x00")
 }
 
-func managedReplaceKey(intent scim.WriteIntent, domain string) (string, error) {
+func managedGroupPatchKey(intent scim.WriteIntent) (string, error) {
+	return managedCanonicalWriteKey(intent, "scim-managed-group-patch-v1\x00")
+}
+
+func managedCanonicalWriteKey(intent scim.WriteIntent, domain string) (string, error) {
 	if intent.IdempotencyKey != "" {
 		return "", scim.NewError(400, "invalidValue")
 	}

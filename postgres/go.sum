@@ -151,8 +151,8 @@ github.com/faustbrian/go-scim v0.0.0-20261126192324-58b4c020b73f h1:f0yBvun42N6L
 github.com/faustbrian/go-scim v0.0.0-20261126192324-58b4c020b73f/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
 github.com/faustbrian/go-scim v0.0.0-20261126200624-c34e6bd88d3a h1:JHcV7wMIaHprwwzaoHhivb+wr0TskdvSmD2QuTPiM8I=
 github.com/faustbrian/go-scim v0.0.0-20261126200624-c34e6bd88d3a/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
-github.com/faustbrian/go-scim v0.0.0-20261126230442-4037f60e5cb1 h1:Lg6M+q092qEztm+omwTvKKSCjc8mr3q7StQalzqan2A=
-github.com/faustbrian/go-scim v0.0.0-20261126230442-4037f60e5cb1/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
+github.com/faustbrian/go-scim v0.0.0-20261126234327-637e84b6a55f h1:ICq0dhBTPkHb3WZXEU1u/833cmvM4wvRidqaDoL8qK4=
+github.com/faustbrian/go-scim v0.0.0-20261126234327-637e84b6a55f/go.mod h1:sPv2T27E2Yk2QwTDGyd07ng+71CvmqaPxMPaYmAps9s=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1 h1:1GHj2WZhKZihdhlbsU12o7T5kaA9z7IOy/1RQGu3RhA=
 github.com/faustbrian/go-secret-envelope/v2 v2.0.1/go.mod h1:X8VgGx/HsaHif3pNbS6A35sYg3SzF1+8A1YIZMd6Lnw=
 github.com/faustbrian/go-service v1.1.2 h1:8gKlxhILZzn1gQg5edVzRomlqLLaa07e2nC9dZ2rxIM=
