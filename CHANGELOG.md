@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit GroupCreate admission after current bearer/operation authority
+  and bounded Group/member preflight, before command, mapping or Store effects.
+  Preserve canonical Store command/replay, exact-connection typed membership,
+  atomic write authority, original deadlines and redacted disclosure/reentry
+  fences; ordinary execution and sibling selections are unchanged.
+
 - Add explicit GroupGet/GroupList admission after current bearer and operation
   authority, before GroupStore reads or projection. Reuse original deadlines,
   redacted denials, descendant-context reentry and final disclosure fencing;

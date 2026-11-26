@@ -140,6 +140,19 @@ This entry point does not select Group search, writes, discovery, a credential
 verifier, a quota owner, storage or HTTP routes. Ordinary Group execution and
 the separate User admission selections are unchanged.
 
+`GroupsService.ExecuteAdmittedCreate(ctx, request, gate)` separately selects
+`GroupCreate` only. Current bearer/operation authority and existing bounded
+Group schema, member, target and query validation precede its once-per-attempt
+gate, including retries. Mapping, command allocation and GroupStore admission
+follow only an allowed, still-current result. The same original deadlines,
+redacted denials, descendant-context reentry and late-result disclosure fences
+apply, including invalid calls to this entry point from the gate. The gate
+must honor its context, retain no invocation state and start no detached work.
+Canonical Store commands, replay, typed member integrity within the exact
+connection and atomic write authority remain unchanged. This selection adds
+no credential verifier, quota owner, storage, HTTP route or other Group write;
+ordinary execution and separate User and Group-read selections are unchanged.
+
 `UsersService.ExecuteAdmittedCreate(ctx, request, gate)` separately selects
 `UserCreate` with a required synchronous trusted gate. Existing bounded JSON,
 schema, target and query validation, actual bearer authentication and operation
