@@ -297,6 +297,10 @@ func (s *Service) requestKeys(p *nativePhase) kernel.RequestKeyConfig {
 		// Same private lookup custody and journal, distinct trusted namespace
 		// mode. A protocol selector is never an invented client retry header.
 		keys.Namespace += "-canonical-delete-v1"
+	} else if p != nil && p.managedUserPatch() {
+		// The selected managed profile has only server-derived keys; never
+		// share that space with caller-selected keys on ordinary provisioning.
+		keys.Namespace += "-managed-patch-v1"
 	}
 	return keys
 }

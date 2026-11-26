@@ -115,6 +115,14 @@ retain no invocation/context or detached work. This selection adds no limiter,
 SQL, migration, lifecycle, HTTP route or caller-key semantics, and ordinary
 provisioning and admitted Create/read selections remain unchanged.
 
+`ExecuteManagedAdmittedPatch` separately selects conditional User Patch with
+the issued bearer, exact tenant and configured client. It rejects caller
+request keys. Once current authority, strong `If-Match`, the bounded PatchOp
+and the gate admit the call, the canonical scoped request selects one original
+command. An equivalent retry returns the original resource and ETag without
+another write. Different input with a stale ETag still fails the original CAS.
+The underlying projection, audit, outbox and recovery retain their owners.
+
 `NewGroupBulkService` explicitly selects Group Bulk **admission**. Apply the
 kernel's `CanonicalSCIMBulkRequestMigrationSource` and this module's
 `BulkAdmissionMigrationSource` before calling `Admit`. A bounded input and a

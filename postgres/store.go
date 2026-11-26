@@ -47,6 +47,14 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 		if err != nil {
 			return scim.PreparedWrite{}, err
 		}
+	} else if p.managedUserPatch() {
+		key, err := managedUserPatchKey(intent)
+		if err != nil {
+			return scim.PreparedWrite{}, err
+		}
+		if err := p.resolveOriginal(ctx, key, intent.CanonicalRequest); err != nil {
+			return scim.PreparedWrite{}, prepareError(err)
+		}
 	} else if intent.IdempotencyKey == "" && !nativeDelete(intent.Operation) {
 		// Pure mapping needs no durable entropy preparation. Keep the root's
 		// original proposal command and invocation-only metadata; Commit still

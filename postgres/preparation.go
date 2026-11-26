@@ -352,6 +352,30 @@ func (p *nativePhase) resolveOriginal(ctx context.Context, key string, canonical
 	return err
 }
 
+func (p *nativePhase) managedUserPatch() bool {
+	return p.service.managed != nil && !p.bootstrap && p.bulkChild == nil && p.intent.Operation == scim.UserPatch
+}
+
+// The input is already bounded and canonicalized by the protocol owner. The
+// digest selects this exact scoped request, including its precondition. Only
+// the existing coordinator stores the keyed lookup and original intent; the
+// internal key is never assigned to the caller's WriteIntent.
+func managedUserPatchKey(intent scim.WriteIntent) (string, error) {
+	if intent.IdempotencyKey != "" {
+		return "", scim.NewError(400, "invalidValue")
+	}
+	scope, err := json.Marshal(intent.Scope)
+	if err != nil {
+		return "", identity.UnavailableError{}
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte("scim-managed-user-patch-v1\x00"))
+	_, _ = h.Write(scope)
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(intent.CanonicalRequest)
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)), nil
+}
+
 func nativeMutation(op scim.Operation) bool {
 	return op == scim.UserReplace || op == scim.UserPatch || op == scim.UserDelete || op == scim.GroupReplace || op == scim.GroupPatch || op == scim.GroupDelete
 }

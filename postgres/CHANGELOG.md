@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add explicit admitted conditional User Patch for issued managed bearers.
+  Bind the canonical scoped request to one original command and retain its
+  resource and ETag on headerless retry without applying another update.
+
 - Add explicit admitted conditional User Delete for an issued managed bearer
   and exact configured native client. Preserve existing If-Match checks,
   membership-source withdrawal and canonical headerless 204 replay, without

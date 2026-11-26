@@ -147,3 +147,38 @@ func (s *ManagedConnectionService) ExecuteManagedAdmittedDelete(ctx context.Cont
 		})
 	})
 }
+
+// ExecuteManagedAdmittedPatch selects only conditional User Patch for the
+// issued bearer and exact tenant. It requires a synchronous gate and rejects
+// caller request keys. After current authority, bounded preflight and the gate,
+// the native Store binds the canonical request to one original command.
+// Atomic patching, CAS and recovery stay with the existing mutation owner.
+// The gate receives the configured client and must honor its context without
+// retaining the invocation or starting detached work.
+func (s *ManagedConnectionService) ExecuteManagedAdmittedPatch(ctx context.Context, tenant identity.TenantID, request scim.Request, admit scim.ProtocolAdmission) (scim.Response, error) {
+	if s == nil || ctx == nil || s.writer == nil || admit == nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	if request.Operation != scim.UserPatch {
+		return scim.Response{}, scim.NewError(501, "")
+	}
+	if request.IdempotencyKey != "" {
+		return scim.Response{}, scim.NewError(400, "invalidValue")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.config.MaximumDuration)
+	defer cancel()
+	source, err := s.loadManagedProvisioning(ctx, tenant, request.Credential)
+	if err != nil {
+		var denied identity.ForbiddenError
+		if errors.As(err, &denied) {
+			return scim.Response{}, scim.NewError(401, "")
+		}
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	return source.executeProtocol(ctx, request, func(ctx context.Context, request scim.Request) (scim.Response, error) {
+		return source.protocol.ExecuteAdmittedPatch(ctx, request, func(ctx context.Context) *scim.Error {
+			configured := source.config()
+			return admit(ctx, scim.ProtocolClient{ID: configured.ActorID, TenantID: configured.Scope.TenantID})
+		})
+	})
+}
