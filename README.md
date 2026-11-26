@@ -109,6 +109,23 @@ Supply concurrency-safe `Authenticator`, `Authorizer`, `Mapper` and `Store`
 implementations. A request carries a credential, not an arbitrary principal,
 connection, tenant, organization, permission Boolean or command ID.
 
+Trusted composition can explicitly select
+`UsersService.ExecuteAdmittedRead(ctx, request, gate)` for `UserGet` and
+`UserList` only. A nonnil synchronous gate is required after the actual bearer
+authentication and operation authorization, before any resource I/O. Bind any
+authenticated client identity privately in that request-local gate; the
+protocol's `Connection` is not actor authority. The gate consumes the original
+remaining authority, request and parent deadlines without extending them. A nil
+result allows the read; 403 and a bounded 429 with a positive retry delay are
+normalized to redacted denials, and other failures become 503. Cancellation or
+authority expiry during the gate overrides even its selected denial, and the
+final disclosure fence remains in force. The gate must honor its context,
+retain no invocation state and launch no detached work.
+
+This selection does not add a rate engine, validate managed bearer storage,
+implement HTTP routes, or enable search, Groups, discovery or writes. Ordinary
+`Execute` and sibling services retain their existing behavior.
+
 ```go
 func CreateUser(ctx context.Context, service *scim.UsersService,
     credential authentication.BearerCredential) (scim.Response, error) {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an explicit UserGet/UserList selection requiring a synchronous trusted
+  gate after current bearer authentication and authorization, before resource
+  I/O. Preserve original authority deadlines and final disclosure fencing;
+  normalize redacted admission denials and bounded 429 retry metadata without
+  changing ordinary execution, sibling services or enabling HTTP routes.
+
 - Add immutable, credential-free managed connection records, canonical IDs,
   and bounded mapping paths and sets. The released authenticator `Connection`
   and available connection-management operations are unchanged.

@@ -26,7 +26,11 @@ func (s *UsersService) Execute(parent context.Context, r Request) (Response, err
 	return s.service.execute(parent, r)
 }
 
-func (s *protocolService) execute(parent context.Context, r Request) (out Response, err error) {
+func (s *protocolService) execute(parent context.Context, r Request) (Response, error) {
+	return s.executeWithReadAdmission(parent, r, nil)
+}
+
+func (s *protocolService) executeWithReadAdmission(parent context.Context, r Request, admit func(context.Context) *Error) (out Response, err error) {
 	defer func() {
 		if recover() != nil {
 			out = Response{}
@@ -114,6 +118,11 @@ func (s *protocolService) execute(parent context.Context, r Request) (out Respon
 	}
 	if !s.authorityCurrent(ctx, c) {
 		return Response{}, failure(503, "")
+	}
+	if admit != nil {
+		if denial := s.admitUsersRead(ctx, c, admit); denial != nil {
+			return Response{}, denial
+		}
 	}
 	switch r.Operation {
 	case ServiceProviderConfig, SchemasList, SchemaGet, ResourceTypesList, ResourceTypeGet:
