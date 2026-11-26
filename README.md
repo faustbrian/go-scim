@@ -153,6 +153,18 @@ deadlines, normalized denials, reentry and late-result fences apply. Native
 request-key behavior is unchanged. No HTTP transport is added, and this entry
 point does not authorize the public HTTP `Idempotency-Key` extension.
 
+`UsersService.ExecuteAdmittedPatch(ctx, request, gate)` separately selects
+only `UserPatch`. Current bearer/operation authority and existing bounded
+target, required strong `If-Match`, request/query and PatchOp checks precede
+its once-per-attempt gate. The complete parsed patch and canonical request
+continue unchanged through the existing Store's precondition, atomic CAS,
+no-op metadata, failure/unknown outcome and replay rules. Admission grants none
+of that authority. Original deadlines, normalized denials, descendant-context
+reentry and late-result fences match admitted Create and Delete. No command,
+mapping or resource I/O precedes an allowed, still-current gate result.
+Ordinary execution and other selections are unchanged; no storage, HTTP route
+or public HTTP `Idempotency-Key` extension is enabled by this entry point.
+
 ```go
 func CreateUser(ctx context.Context, service *scim.UsersService,
     credential authentication.BearerCredential) (scim.Response, error) {

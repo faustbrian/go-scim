@@ -83,6 +83,29 @@ func (s *UsersService) ExecuteAdmittedDelete(parent context.Context, r Request, 
 	return s.service.executeWithUsersAdmission(parent, r, guardUsersWriteAdmission(admit))
 }
 
+// ExecuteAdmittedPatch explicitly selects UserPatch with a required trusted
+// admission gate. Other operations return 501; a nil service or gate returns
+// 503. Current bearer/operation authority and existing bounded target, required
+// strong If-Match, request/query and complete PatchOp validation precede its
+// one invocation. The original parsed patch, canonical command and Store-owned
+// precondition, atomic write and replay remain unchanged after admission.
+//
+// Inputs and admit are borrowed synchronously. The original deadlines, redacted
+// denial rules and descendant-context reentry fence of ExecuteAdmittedCreate
+// apply. No command allocation, mapping or resource I/O precedes the gate.
+// A late result is withheld without changing the Store's committed or unknown
+// outcome. The gate must honor ctx, retain no invocation/context and start no
+// detached work. This selects no other operation, storage or HTTP transport.
+func (s *UsersService) ExecuteAdmittedPatch(parent context.Context, r Request, admit func(context.Context) *Error) (Response, error) {
+	if s == nil || s.service == nil || admit == nil {
+		return Response{}, failure(503, "")
+	}
+	if r.Operation != UserPatch {
+		return Response{}, failure(501, "")
+	}
+	return s.service.executeWithUsersAdmission(parent, r, guardUsersWriteAdmission(admit))
+}
+
 func guardUsersWriteAdmission(admit func(context.Context) *Error) func(context.Context) *Error {
 	return func(ctx context.Context) *Error {
 		state := &usersWriteAdmissionState{}

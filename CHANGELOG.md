@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit conditional UserPatch admission after current authority and
+  existing bounded request, PatchOp and strong If-Match preflight, before
+  command, mapping or resource effects. Preserve the complete patch, canonical
+  Store command/replay, atomic CAS and original authority/disclosure fences;
+  ordinary execution and other operation selections are unchanged.
+
 - Add explicit conditional UserDelete admission after current authority and
   existing target/If-Match preflight, before command or receipt effects.
   Preserve Store-owned deletion, headerless replay and unknown outcomes;
