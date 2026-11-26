@@ -11,6 +11,8 @@ import (
 
 type bulkDependencyProbe struct {
 	child  *bulkChildExecution
+	cycle  *bulkCycleDependency
+	ready  bool
 	failed bool
 }
 
@@ -79,16 +81,8 @@ func (s *GroupBulkService) resolveBulkDependency(ctx context.Context, parent *na
 		return scim.BulkChildResult{}, false, nil
 	}
 	probe := &bulkDependencyProbe{child: child}
-	parent.dependency = probe
-	defer func() { parent.dependency = nil }()
-	plan, err := parent.executionPlan()
-	if err != nil {
+	if err := parent.observeBulkDependency(ctx, probe); err != nil {
 		return scim.BulkChildResult{}, false, err
-	}
-	spec, _ := parent.command.Feature()
-	reservation, receipt, err := parent.coordinator.ReserveCommand(ctx, spec.Binding, parent.command, plan)
-	if err != nil || reservation != (kernel.Reservation{}) || receipt.Outcome != identity.CommitOutcomeCommitted {
-		return scim.BulkChildResult{}, false, identity.UnavailableError{}
 	}
 	if probe.failed {
 		if err := s.retainBulkDependencyDenial(ctx, parent, child); err != nil {
@@ -105,6 +99,21 @@ func (s *GroupBulkService) resolveBulkDependency(ctx context.Context, parent *na
 	return result, ready, nil
 }
 
+func (parent *nativePhase) observeBulkDependency(ctx context.Context, probe *bulkDependencyProbe) error {
+	parent.dependency = probe
+	defer func() { parent.dependency = nil }()
+	plan, err := parent.executionPlan()
+	if err != nil {
+		return err
+	}
+	spec, _ := parent.command.Feature()
+	reservation, receipt, err := parent.coordinator.ReserveCommand(ctx, spec.Binding, parent.command, plan)
+	if err != nil || reservation != (kernel.Reservation{}) || receipt.Outcome != identity.CommitOutcomeCommitted {
+		return identity.UnavailableError{}
+	}
+	return nil
+}
+
 func (p *nativePhase) SCIMBulkDependencyCheckpointSelected() bool {
 	return p.bulk != nil && p.dependency != nil
 }
@@ -119,6 +128,12 @@ func (p *nativePhase) ReconcileSCIMBulkDependency(ctx context.Context, w kernel.
 	probe := p.dependency
 	child := probe.child
 	binding, registration, lifecycle, err := w.FeatureScope(p)
+	if probe.cycle != nil {
+		if err != nil || binding.CommandID != p.original.Command || registration != p.registration() || lifecycle != p.lifecycle() {
+			return false, identity.ForbiddenError{}
+		}
+		return p.reconcileBulkCycleDependency(ctx, w, probe)
+	}
 	if err != nil || child == nil || child.row.Ordinal < 0 || child.row.Ordinal >= len(p.bulk.children) ||
 		child.row.Cyclic || child.parent != p.original.Command ||
 		binding.CommandID != child.parent || registration != p.registration() || lifecycle != p.lifecycle() {

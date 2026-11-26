@@ -83,11 +83,16 @@ read neither admits requests nor attaches retry keys. `scim.ErrBulkIncomplete`
 means no terminal response is available; it returns no partial bytes. Calling
 either member of a retained all-Group create cycle executes the whole cycle
 atomically. It resolves the original final IDs before writing and checks the
-within-cycle Group references before committing. A confirmed member denial
-records one 424 for every member and applies any cutoff only after counting the
-whole component. An uncertain database or commit acknowledgment returns no
-provisional result; retry the same request to read settled checkpoints. If an
-older native writer recorded a denial without settling its child checkpoint,
+within-cycle Group references before committing. An unresolved external
+predecessor blocks the whole cycle without counting a failure. Re-select either
+member after the predecessor settles: success resumes the whole cycle or
+audits a skip for each member if cutoff is active. A confirmed predecessor
+failure records an original 424 for each member, even after cutoff. A confirmed
+member denial also records one 424 per member; any new cutoff takes effect
+after the whole component is counted. An uncertain database or commit
+acknowledgment returns no provisional result; retry the same request to read
+settled checkpoints. If an older native writer recorded a denial without settling
+its child checkpoint,
 retry that child with `ExecuteChild`. Reconciliation uses current authority
 and preserves the original denial and security audit. Other cyclic operations
 and mixed User/Group execution remain unsupported.

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Settle external predecessors of all-Group Bulk create cycles as a whole.
+  Resume after success, retain an audited skip for each member at cutoff, or
+  record each original dependency failure without applying any Group.
+
 - Retain acyclic Group Bulk dependency blocks and definitive 424 results. Resume
   after predecessor success, or retain an audited skip if cutoff is already active.
 

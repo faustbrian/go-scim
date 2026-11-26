@@ -13,11 +13,15 @@ import (
 // and references to Users always use ordinary existence validation.
 type groupCreateCycleMember struct {
 	deferredGroupIDs map[string]struct{}
+	externalFailure  *bulkCycleDependency
 }
 
-const bulkCycleChildMatch = `parent.parent_id=child.parent_id AND child.parent_id=$1 AND child.ordinal=$2
+const bulkCycleChildScope = `parent.parent_id=child.parent_id AND child.parent_id=$1 AND child.ordinal=$2
  AND child.command_id=$3 AND child.request_fingerprint=$4 AND child.resource_id=$5
- AND child.component_order=$6 AND child.component_id=$7 AND child.cyclic AND child.status='admitted'
+ AND child.component_order=$6 AND child.component_id=$7 AND child.cyclic`
+
+const bulkCycleChildMatch = bulkCycleChildScope + `
+ AND child.status IN ('admitted','dependency-blocked')
  AND ` + bulkPriorComponentsReady + `
  AND NOT EXISTS (SELECT 1 FROM unnest(child.dependency_ids) AS dependency(id)
   WHERE NOT EXISTS (SELECT 1 FROM scim.bulk_children AS predecessor WHERE predecessor.parent_id=child.parent_id
@@ -26,19 +30,29 @@ const bulkCycleChildMatch = `parent.parent_id=child.parent_id AND child.parent_i
      AND predecessor.component_id=child.component_id AND predecessor.status `
 
 const bulkCycleChildStart = `UPDATE scim.bulk_children AS child SET status='running'
-FROM scim.bulk_requests AS parent WHERE ` + bulkCycleChildMatch + `IN ('admitted','running')))))`
+FROM scim.bulk_requests AS parent WHERE ` + bulkCycleChildMatch + `IN ('admitted','dependency-blocked','running')))))`
 
 const bulkCycleChildFail = `UPDATE scim.bulk_children AS child SET status='failed',result_code=424
-FROM scim.bulk_requests AS parent WHERE ` + bulkCycleChildMatch + `IN ('admitted','failed')))))`
+FROM scim.bulk_requests AS parent WHERE ` + bulkCycleChildMatch + `IN ('admitted','dependency-blocked','failed')))))`
 
-const bulkCycleParentFail = `UPDATE scim.bulk_requests AS parent SET failed_count=failed_count+$4::integer,
- cutoff_active=(parent.fail_on_errors>0 AND parent.failed_count+$4::integer>=parent.fail_on_errors)
-WHERE parent.parent_id=$1 AND NOT parent.cutoff_active AND (
+const bulkCycleExternalFail = `UPDATE scim.bulk_children AS child SET status='failed',result_code=424
+FROM scim.bulk_requests AS parent WHERE ` + bulkCycleChildScope + `
+ AND (parent.cutoff_active AND child.status='dependency-blocked'
+  OR (` + bulkPriorComponentsReady + `) AND child.status IN ('admitted','dependency-blocked'))`
+
+const bulkCycleParentFailureUpdate = `UPDATE scim.bulk_requests AS parent SET failed_count=failed_count+$4::integer,
+ cutoff_active=parent.cutoff_active OR (parent.fail_on_errors>0 AND parent.failed_count+$4::integer>=parent.fail_on_errors)
+WHERE parent.parent_id=$1 AND `
+
+const bulkCycleFailedMembers = `(
  SELECT count(*) FROM scim.bulk_children AS member
  WHERE member.parent_id=parent.parent_id AND member.component_order=$2 AND member.component_id=$3
   AND member.cyclic AND member.status='failed' AND member.result_code=424
 )=$4::integer
 RETURNING parent.cutoff_active`
+
+const bulkCycleParentFail = bulkCycleParentFailureUpdate + `NOT parent.cutoff_active AND ` + bulkCycleFailedMembers
+const bulkCycleExternalParentFail = bulkCycleParentFailureUpdate + bulkCycleFailedMembers
 
 func (s *GroupBulkService) executeGroupCreateCycle(ctx context.Context, request BulkAdmissionRequest, parent *nativePhase, plan scim.BulkPlan, rows []bulkChildRow, ordinal int) (scim.BulkChildResult, error) {
 	selected := rows[ordinal]
@@ -59,11 +73,27 @@ func (s *GroupBulkService) executeGroupCreateCycle(ctx context.Context, request 
 		componentIDs[row.Command] = row.Resource
 		members[i] = newBulkGroupExecution(parent.original, row, scim.GroupCreate, row.Resource, "")
 	}
+	cycle, err := newBulkCycleDependency(members)
+	if err != nil {
+		return scim.BulkChildResult{}, err
+	}
+	var failedExternal *bulkCycleDependency
+	if cycle != nil {
+		probe := &bulkDependencyProbe{cycle: cycle}
+		if err := parent.observeBulkDependency(ctx, probe); err != nil {
+			return scim.BulkChildResult{}, err
+		}
+		if probe.failed {
+			failedExternal = cycle
+		} else if !probe.ready {
+			return s.readGroupCycleMember(ctx, parent, selected)
+		}
+	}
 	// Parse/map and authorize every member before touching any child journal.
 	// GroupsService must not be told that a provisional Group has committed.
 	phases := make([]*nativePhase, len(members))
 	for i, child := range members {
-		child.cycle = &groupCreateCycleMember{deferredGroupIDs: make(map[string]struct{})}
+		child.cycle = &groupCreateCycleMember{deferredGroupIDs: make(map[string]struct{}), externalFailure: failedExternal}
 		for _, id := range child.row.Dependencies {
 			if target, ok := componentIDs[id]; ok {
 				child.cycle.deferredGroupIDs[target] = struct{}{}
@@ -132,10 +162,21 @@ func (p *nativePhase) RecordSCIMBulkGroupComponentFailure(ctx context.Context, w
 		binding.RecordID != child.original.ID || binding.CorrelationID != string(child.parent) {
 		return identity.ForbiddenError{}
 	}
-	if err := p.checkCurrent(ctx, w); err != nil {
+	if err := p.checkCycleAuthority(ctx, w); err != nil {
 		return err
 	}
-	changed, err := w.Exec(ctx, bulkCycleChildFail, append(child.args(), child.row.ComponentID)...)
+	statement := bulkCycleChildFail
+	if cycle := child.cycle.externalFailure; cycle != nil {
+		// The kernel invokes members in original order. The first callback
+		// rechecks the component after rollback releases its provisional locks.
+		if child.row.Ordinal == cycle.id {
+			if err := requireFailedBulkCycleDependency(ctx, w, cycle); err != nil {
+				return err
+			}
+		}
+		statement = bulkCycleExternalFail
+	}
+	changed, err := w.Exec(ctx, statement, append(child.args(), child.row.ComponentID)...)
 	if err != nil || changed != 1 {
 		return identity.UnavailableError{}
 	}
@@ -143,7 +184,11 @@ func (p *nativePhase) RecordSCIMBulkGroupComponentFailure(ctx context.Context, w
 		return nil
 	}
 	var cutoff bool
-	if err := readBulkFailureCheckpoint(ctx, w, bulkCycleParentFail, &cutoff, string(child.parent), child.row.ComponentOrder, child.row.ComponentID, count); err != nil {
+	parentFailure := bulkCycleParentFail
+	if child.cycle.externalFailure != nil {
+		parentFailure = bulkCycleExternalParentFail
+	}
+	if err := readBulkFailureCheckpoint(ctx, w, parentFailure, &cutoff, string(child.parent), child.row.ComponentOrder, child.row.ComponentID, count); err != nil {
 		return err
 	}
 	if cutoff {
@@ -157,5 +202,28 @@ func (p *nativePhase) RecordSCIMBulkGroupComponentFailure(ctx context.Context, w
 			}
 		}
 	}
+	return p.checkCycleAuthority(ctx, w)
+}
+
+func (p *nativePhase) checkCycleAuthority(ctx context.Context, w kernel.Work) error {
+	if p.failedCycleDependency() != nil {
+		// Settling a known external failure has no Group write authority.
+		return p.checkAdmission(ctx, w, p.admission)
+	}
 	return p.checkCurrent(ctx, w)
+}
+
+func (p *nativePhase) failedCycleDependency() *bulkCycleDependency {
+	if p.bulkChild == nil || p.bulkChild.cycle == nil {
+		return nil
+	}
+	return p.bulkChild.cycle.externalFailure
+}
+
+func requireFailedBulkCycleDependency(ctx context.Context, w kernel.Work, cycle *bulkCycleDependency) error {
+	state, err := readBulkCycleDependency(ctx, w, cycle)
+	if err != nil || !state.canFail() {
+		return identity.UnavailableError{}
+	}
+	return nil
 }

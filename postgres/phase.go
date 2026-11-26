@@ -276,6 +276,9 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		return identity.FeatureReceipt{}, err
 	}
 	check := p.checkCurrent
+	if p.failedCycleDependency() != nil {
+		check = p.checkCycleAuthority
+	}
 	if p.denialOnly == kernel.FeatureFailureSCIMBulkDependency {
 		// The exact original graph can be settled under current authority.
 		// This no-effect plan must not refresh the original execution window.
@@ -299,6 +302,14 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		}
 	} else if p.group() {
 		if p.bulkChild != nil {
+			if cycle := p.failedCycleDependency(); cycle != nil {
+				if err := requireFailedBulkCycleDependency(ctx, w, cycle); err != nil {
+					return identity.FeatureReceipt{}, err
+				}
+				// This exact registered member now has a proved dependency
+				// failure. The component owner rolls back before all 424s.
+				return identity.FeatureReceipt{}, w.DenyFeature(ctx, p, command, kernel.FeatureFailureConflict)
+			}
 			if p.denialOnly != 0 {
 				if !p.bulkDenialMatches(p.denialOnly) {
 					return identity.FeatureReceipt{}, identity.ForbiddenError{}

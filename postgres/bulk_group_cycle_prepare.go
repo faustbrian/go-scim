@@ -69,7 +69,15 @@ func (s *GroupBulkService) prepareGroupCycleChild(ctx context.Context, request B
 	ctx = context.WithValue(ctx, invocationKey{}, &i)
 	ctx = context.WithValue(ctx, groupCyclePreparationKey{}, capture)
 	response, err := s.groups.Execute(ctx, scim.Request{Operation: scim.GroupCreate, Credential: request.Credential, Body: resolved.Data, ContentType: "application/scim+json"})
+	var protocol *scim.Error
 	if capture.phase == nil {
+		if ctx.Err() == nil && i.phase == nil && child.cycle != nil && child.cycle.externalFailure != nil &&
+			errors.As(err, &protocol) && protocol != nil && (protocol.StatusCode() == 400 || protocol.StatusCode() == 413) {
+			// A document rejected before Prepare could never reserve a normal
+			// child claim. Keep ordinary claims for valid documents so an older
+			// writer's pending reservation can still be recovered unchanged.
+			return s.prepareRejectedCycleDependency(ctx, &i, child)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -77,13 +85,32 @@ func (s *GroupBulkService) prepareGroupCycleChild(ctx context.Context, request B
 	}
 	// The public root maps InProgress to 503 and does not abort. A 503 alone
 	// never proves preparation: only this exact private Commit capture does.
-	var protocol *scim.Error
 	if ctx.Err() != nil || !errors.As(err, &protocol) || protocol == nil || protocol.StatusCode() != 503 ||
 		response.Status != 0 || response.ContentType != "" || len(response.Body) != 0 || response.ETag != "" || response.Location != "" ||
 		capture.phase != i.phase || !capture.matches(s.native, &i, capture.phase) {
 		return nil, identity.ForbiddenError{}
 	}
 	return capture.phase, nil
+}
+
+func (s *GroupBulkService) prepareRejectedCycleDependency(ctx context.Context, i *invocation, child *bulkChildExecution) (*nativePhase, error) {
+	// Early protocol validation can run before authorization. Keep that
+	// check and the in-Work dependency proof for this no-effect command.
+	if err := s.native.decide(ctx, string(scim.GroupCreate), "", "identity.scim.group"); err != nil {
+		return nil, err
+	}
+	p := &nativePhase{service: s.native, admission: *i, bulkChild: child, original: child.original,
+		intent: scim.WriteIntent{Operation: scim.GroupCreate, CommandID: child.original.Command,
+			Scope: i.connection.Scope, Connection: i.connection}}
+	var err error
+	p.coordinator, p.registry, err = s.native.coordinator(p)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.initialize(ctx, []byte("identity.scim.bulk.cycle.failed-dependency.v1")); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 func (c *groupCyclePreparation) matches(service *Service, i *invocation, p *nativePhase) bool {
