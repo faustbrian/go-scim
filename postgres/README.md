@@ -61,6 +61,14 @@ Cycles containing Users remain unsupported. The Group-only constructor does
 not accept a User operation. Select mixed Bulk only when every executor for
 that connection can resume mixed requests.
 
+Call `BulkService.ExecuteBulk(ctx, request)` to admit and drive the existing
+native graph in dependency order within the configured request deadline. It
+resumes from retained checkpoints and returns only the full, currently
+authorized response in original request order. An interrupted call may have
+committed earlier children; retry the same body and optional key rather than
+constructing a new request. This is a native entry point, not a Bulk HTTP
+route or discovery switch.
+
 The applicable User record update, projection, child checkpoint, protected
 audit and lifecycle effect commit together. A no-op PATCH keeps its original
 ETag. DELETE tombstones only the connection-scoped SCIM projection, not the

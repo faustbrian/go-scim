@@ -45,11 +45,15 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 	if err != nil {
 		return result, err
 	}
-	child := parent.bulk.children[ordinal]
 	rows, err := parent.bulk.childRows()
 	if err != nil {
 		return result, err
 	}
+	return s.executeAdmittedBulkChild(ctx, request, parent, plan, rows, ordinal)
+}
+
+func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request BulkAdmissionRequest, parent *nativePhase, plan scim.BulkPlan, rows []bulkChildRow, ordinal int) (result scim.BulkChildResult, err error) {
+	child := parent.bulk.children[ordinal]
 	selected := rows[ordinal]
 	operation, target := parent.bulk.selectChild(ordinal, parent.bulk.createTargets())
 	if operation != "" {

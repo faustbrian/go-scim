@@ -113,26 +113,30 @@ func (s *GroupBulkService) admitGraph(ctx context.Context, request BulkAdmission
 	if err != nil {
 		return nil, scim.BulkPlan{}, err
 	}
-	p, plan := prepared.phase, prepared.plan
-	canonical := plan.CanonicalRequest()
-	defer clear(canonical)
-	if err := p.loadBulkOriginal(ctx, canonical, request.IdempotencyKey, bulkAdmitCustody); err != nil {
+	if err := s.commitBulkGraph(ctx, prepared, request.IdempotencyKey); err != nil {
 		return nil, scim.BulkPlan{}, err
+	}
+	return prepared.phase, prepared.plan, nil
+}
+
+func (s *GroupBulkService) commitBulkGraph(ctx context.Context, prepared preparedBulkGraph, key *identity.IdempotencyKey) error {
+	p := prepared.phase
+	canonical := prepared.plan.CanonicalRequest()
+	defer clear(canonical)
+	if err := p.loadBulkOriginal(ctx, canonical, key, bulkAdmitCustody); err != nil {
+		return err
 	}
 	receipt, err := p.execute(ctx)
 	if err != nil {
-		return nil, scim.BulkPlan{}, err
+		return err
 	}
 	if receipt.Outcome != identity.CommitOutcomeCommitted {
-		return nil, scim.BulkPlan{}, scim.NewError(503, "")
+		return scim.NewError(503, "")
 	}
 	if err := p.requireCommittedBulkAdmission(ctx); err != nil {
-		return nil, scim.BulkPlan{}, err
+		return err
 	}
-	if err := s.native.recheckRead(ctx, &p.admission); err != nil {
-		return nil, scim.BulkPlan{}, err
-	}
-	return p, plan, nil
+	return s.native.recheckRead(ctx, &p.admission)
 }
 
 type preparedBulkGraph struct {

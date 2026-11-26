@@ -40,10 +40,19 @@ func (s *GroupBulkService) ReadResult(ctx context.Context, request BulkAdmission
 	if err := p.loadBulkOriginal(ctx, canonical, request.IdempotencyKey, bulkReadCustody); err != nil {
 		return nil, err
 	}
-	results, err := p.readBulkTerminalCheckpoints(ctx)
+	return s.readAdmittedBulkResult(ctx, prepared)
+}
+
+func (s *GroupBulkService) readAdmittedBulkResult(ctx context.Context, prepared preparedBulkGraph) ([]byte, error) {
+	results, err := prepared.phase.readBulkCheckpoints(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return s.writeBulkResult(ctx, prepared, results)
+}
+
+func (s *GroupBulkService) writeBulkResult(ctx context.Context, prepared preparedBulkGraph, results []scim.BulkChildResult) ([]byte, error) {
+	p := prepared.phase
 	// An authorized Bulk connection is not authority to disclose each result.
 	// Check the original operation against the same target as ExecuteChild.
 	// Multiple results with the same operation and target have the same scope.
@@ -95,7 +104,10 @@ SELECT child.ordinal,child.command_id,child.request_fingerprint,child.resource_i
  child.status,child.skip_reason,child.result_code,child.result_resource_id,child.result_version,parent.failed_count,parent.cutoff_active
 FROM parent JOIN scim.bulk_children child USING(parent_id) ORDER BY child.ordinal LIMIT ($9::integer+1)`
 
-func (p *nativePhase) readBulkTerminalCheckpoints(ctx context.Context) ([]scim.BulkChildResult, error) {
+// An incomplete graph returns its validated internal checkpoints so execution
+// can resume without spending its bounded call on completed components. The
+// result reader must not disclose any checkpoints when an error is returned.
+func (p *nativePhase) readBulkCheckpoints(ctx context.Context) ([]scim.BulkChildResult, error) {
 	expected, err := p.bulk.childRows()
 	if err != nil {
 		return nil, err
@@ -149,7 +161,7 @@ func (p *nativePhase) readBulkTerminalCheckpoints(ctx context.Context) ([]scim.B
 		return nil, identity.UnavailableError{}
 	}
 	if incomplete {
-		return nil, scim.ErrBulkIncomplete
+		return results, scim.ErrBulkIncomplete
 	}
 	return results, nil
 }

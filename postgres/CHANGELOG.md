@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Drive the admitted mixed Bulk graph in one bounded native call. Preserve
+  original component order, independent commits, and exact terminal replay;
+  return no Bulk response on an incomplete or unknown outcome.
+
 - Execute conditional User PUT, PATCH, and DELETE in opt-in native Bulk.
   Retain original result versions and confirmed failures on replay, and let
   User DELETE remove only the connection-scoped SCIM projection.
