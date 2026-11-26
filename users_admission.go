@@ -56,21 +56,49 @@ func (s *UsersService) ExecuteAdmittedCreate(parent context.Context, r Request, 
 	if r.Operation != UserCreate {
 		return Response{}, failure(501, "")
 	}
-	return s.service.executeWithUsersAdmission(parent, r, func(ctx context.Context) *Error {
-		state := &usersCreateAdmissionState{}
-		denial := admit(context.WithValue(ctx, usersCreateAdmissionKey{}, state))
+	return s.service.executeWithUsersAdmission(parent, r, guardUsersWriteAdmission(admit))
+}
+
+// ExecuteAdmittedDelete explicitly selects UserDelete with a required trusted
+// admission gate. Other operations return 501; a nil service or gate returns
+// 503. Current bearer/operation authority and existing bounded target, required
+// strong If-Match, empty-body and query validation precede its one invocation.
+// Actual precondition comparison, deletion and original receipt replay remain
+// with the existing Store, after admission; the gate grants none of that authority.
+//
+// Inputs and admit are borrowed synchronously. The original deadlines, redacted
+// denial rules and descendant-context reentry fence of ExecuteAdmittedCreate
+// apply. No command allocation or Store receipt/effect precedes the gate.
+// A late result is withheld without changing the Store's committed or unknown
+// outcome. The gate must honor ctx, retain no invocation/context and start no
+// detached work. Native request-key behavior is unchanged; this selects no HTTP
+// transport, new retry mechanism, other mutation or connection lifecycle.
+func (s *UsersService) ExecuteAdmittedDelete(parent context.Context, r Request, admit func(context.Context) *Error) (Response, error) {
+	if s == nil || s.service == nil || admit == nil {
+		return Response{}, failure(503, "")
+	}
+	if r.Operation != UserDelete {
+		return Response{}, failure(501, "")
+	}
+	return s.service.executeWithUsersAdmission(parent, r, guardUsersWriteAdmission(admit))
+}
+
+func guardUsersWriteAdmission(admit func(context.Context) *Error) func(context.Context) *Error {
+	return func(ctx context.Context) *Error {
+		state := &usersWriteAdmissionState{}
+		denial := admit(context.WithValue(ctx, usersWriteAdmissionKey{}, state))
 		if state.reentered.Load() {
 			return failure(503, "")
 		}
 		return denial
-	})
+	}
 }
 
-type usersCreateAdmissionKey struct{}
+type usersWriteAdmissionKey struct{}
 
 // One gate owns this invocation-local marker. The atomic flag also fails closed
 // if trusted code attempts concurrent descendant calls before the gate returns.
-type usersCreateAdmissionState struct{ reentered atomic.Bool }
+type usersWriteAdmissionState struct{ reentered atomic.Bool }
 
 func (s *protocolService) admitUsersOperation(ctx context.Context, c Connection, admit func(context.Context) *Error) *Error {
 	gateCtx, cancel, err := s.authorityContext(ctx, c)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit conditional UserDelete admission after current authority and
+  existing target/If-Match preflight, before command or receipt effects.
+  Preserve Store-owned deletion, headerless replay and unknown outcomes;
+  ordinary execution and other operation selections are unchanged.
+
 - Add explicit UserCreate admission after existing request validation and current
   bearer/operation authority, before mapping or command effects. Retain canonical
   Store writes and replay, original deadlines and disclosure fencing; fail closed

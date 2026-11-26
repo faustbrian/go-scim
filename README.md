@@ -143,6 +143,16 @@ This entry point adds no limiter, native storage selection or HTTP route. It doe
 not select replacement, PATCH, delete, reads, Groups or Bulk, and ordinary
 `Execute` retains its existing physical behavior.
 
+`UsersService.ExecuteAdmittedDelete(ctx, request, gate)` separately selects
+only `UserDelete`. Current bearer/operation authority and existing bounded
+target, required strong `If-Match`, empty-body and query checks precede its
+once-per-attempt gate. Actual state-dependent precondition checks, deletion,
+unknown outcomes and headerless tombstone-backed replay stay with the existing
+Store; admission does not grant or replace that authority. The same original
+deadlines, normalized denials, reentry and late-result fences apply. Native
+request-key behavior is unchanged. No HTTP transport is added, and this entry
+point does not authorize the public HTTP `Idempotency-Key` extension.
+
 ```go
 func CreateUser(ctx context.Context, service *scim.UsersService,
     credential authentication.BearerCredential) (scim.Response, error) {

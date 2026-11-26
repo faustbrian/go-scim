@@ -56,7 +56,7 @@ func (s *protocolService) executeWithUsersAdmission(parent context.Context, r Re
 	if s == nil || parent == nil {
 		return Response{}, failure(503, "")
 	}
-	if gate, ok := parent.Value(usersCreateAdmissionKey{}).(*usersCreateAdmissionState); ok {
+	if gate, ok := parent.Value(usersWriteAdmissionKey{}).(*usersWriteAdmissionState); ok {
 		gate.reentered.Store(true)
 		return Response{}, failure(503, "")
 	}
@@ -123,7 +123,7 @@ func (s *protocolService) executeWithUsersAdmission(parent context.Context, r Re
 	if !s.authorityCurrent(ctx, c) {
 		return Response{}, failure(503, "")
 	}
-	if admit != nil && r.Operation != UserCreate {
+	if admit != nil && (r.Operation == UserGet || r.Operation == UserList) {
 		if denial := s.admitUsersOperation(ctx, c, admit); denial != nil {
 			return Response{}, denial
 		}
@@ -433,7 +433,7 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 	if e != nil {
 		return Response{}, failure(400, "invalidSyntax")
 	}
-	// Create admission follows the existing bounded schema/query preflight, not
+	// Write admission follows the existing bounded target/schema/query preflight, not
 	// a second parser. No server command, Store reservation or mapping precedes
 	// it; the canonical intent below is otherwise unchanged.
 	if admit != nil {
