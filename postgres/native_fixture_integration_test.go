@@ -46,7 +46,7 @@ func (p configuredPolicy) Decide(ctx context.Context, d authorization.DecisionCo
 	return p(ctx, d)
 }
 
-func newNativeFixture(t *testing.T) *nativeFixture {
+func newNativeFixture(t *testing.T, additionalTenants ...identity.TenantID) *nativeFixture {
 	t.Helper()
 	dsn := os.Getenv("SCIM_POSTGRES_TEST_DSN")
 	parsed, err := pgx.ParseConfig(dsn)
@@ -93,7 +93,7 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 			t.Error("pool cleanup")
 		}
 	})
-	installSource(t, ctx, pool, nativeCanonicalFixtureHistory())
+	installSource(t, ctx, pool, nativeCanonicalFixtureHistory(additionalTenants...))
 	installSource(t, ctx, pool, organizationpg.MigrationSource{Version: 20})
 	installSource(t, ctx, pool, organizationpg.CredentialAuthorityMigrationSource{Version: 21})
 	authoritySQL, err := authoritypg.AuthoritySchemaMigration(30)
@@ -179,9 +179,10 @@ func newNativeFixture(t *testing.T) *nativeFixture {
 	return &nativeFixture{ctx: ctx, pool: pool, service: service, config: c, bearer: bearer, keys: keys, deny: deny}
 }
 
-func nativeCanonicalFixtureHistory() kernel.CanonicalRequestMigrationSource {
+func nativeCanonicalFixtureHistory(additionalTenants ...identity.TenantID) kernel.CanonicalRequestMigrationSource {
 	base := kernel.RequestKeyPreparationMigrationSource{Base: kernel.RequestKeyMigrationSource{Base: kernel.MigrationSource{}, Version: 10}, Version: 11}
-	directory := kernel.DirectoryAuthorityMigrationSource{Base: base, Version: 12, GlobalAuthorityID: "scim-deployment", TenantIDs: []identity.TenantID{"tenant-a"}}
+	tenants := append([]identity.TenantID{"tenant-a"}, additionalTenants...)
+	directory := kernel.DirectoryAuthorityMigrationSource{Base: base, Version: 12, GlobalAuthorityID: "scim-deployment", TenantIDs: tenants}
 	status := kernel.StatusMigrationSource{Base: directory, Version: 13}
 	return kernel.CanonicalRequestMigrationSource{Base: status, Version: 14}
 }

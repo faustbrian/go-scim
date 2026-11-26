@@ -30,11 +30,12 @@ type originalInput struct {
 	// Schema 2 retains the pre-mutation projection, not another outcome or
 	// permission. The existing journal alone decides whether effects committed.
 	// Old schema-1 creation/bootstrap custody remains byte-compatible.
-	Operation     scim.Operation `json:",omitempty"`
-	Current       *scim.Resource `json:",omitempty"`
-	KernelVersion uint64         `json:",omitempty"`
-	UserAuthority uint64         `json:",omitempty"`
-	Generation    int64          `json:",omitempty"`
+	Operation         scim.Operation          `json:",omitempty"`
+	Current           *scim.Resource          `json:",omitempty"`
+	KernelVersion     uint64                  `json:",omitempty"`
+	UserAuthority     uint64                  `json:",omitempty"`
+	Generation        int64                   `json:",omitempty"`
+	ManagedWithdrawal *managedWithdrawalInput `json:",omitempty"`
 }
 
 // Preserve the existing 4 KiB scalar provenance allowance while adding at most
@@ -119,13 +120,6 @@ func (p *nativePhase) newOriginalInput(ctx context.Context, command identity.Com
 			return originalInput{}, err
 		}
 		if err == nil {
-			if !p.group() {
-				status, err := p.service.directory.GetStatus(ctx, identity.UserStatusQuery{TenantID: p.intent.Scope.TenantID, UserID: identity.UserID(input.ID)})
-				if err != nil || status.User.Status != identity.StatusActive {
-					return originalInput{}, identity.ForbiddenError{}
-				}
-				input.KernelVersion, input.UserAuthority = status.User.Version, status.AuthorityVersion
-			}
 			wire, err := json.Marshal(current)
 			if err != nil || len(wire) > 131072 {
 				return originalInput{}, identity.UnavailableError{}
@@ -135,7 +129,12 @@ func (p *nativePhase) newOriginalInput(ctx context.Context, command identity.Com
 			if p.group() {
 				query = `SELECT generation FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND resource=$6 AND deleted_at IS NULL`
 			}
-			err = p.service.pool.Raw().QueryRow(ctx, query, args...).Scan(&input.Generation)
+			user := identity.UserID(input.ID)
+			if p.managedDelete() {
+				err = p.service.pool.Raw().QueryRow(ctx, managedWithdrawalPrepareSQL, args...).Scan(&input.Generation, &user)
+			} else {
+				err = p.service.pool.Raw().QueryRow(ctx, query, args...).Scan(&input.Generation)
+			}
 			clear(wire)
 			if err != nil || input.Generation < 1 {
 				return originalInput{}, identity.UnavailableError{}
@@ -143,6 +142,18 @@ func (p *nativePhase) newOriginalInput(ctx context.Context, command identity.Com
 			input.Current = &current
 			if input.At.Before(current.LastModified) {
 				input.At = current.LastModified
+			}
+			if !p.group() {
+				status, err := p.service.directory.GetStatus(ctx, identity.UserStatusQuery{TenantID: p.intent.Scope.TenantID, UserID: user})
+				if err != nil || status.User.Status != identity.StatusActive {
+					return originalInput{}, identity.ForbiddenError{}
+				}
+				input.KernelVersion, input.UserAuthority = status.User.Version, status.AuthorityVersion
+			}
+			if p.managedDelete() {
+				if err := p.prepareManagedWithdrawal(ctx, &input, user); err != nil {
+					return originalInput{}, err
+				}
 			}
 		}
 		version, err := identity.NewCommandID()
@@ -188,6 +199,9 @@ func (p *nativePhase) restoreOriginal(ctx context.Context, b kernel.RequestKeyPr
 	if _, err := p.service.restoreAdmission(input.Admission, input.At); err != nil {
 		return originalInput{}, identity.UnavailableError{}
 	}
+	if (input.ManagedWithdrawal != nil) != (p.managedDelete() && input.Current != nil) {
+		return originalInput{}, identity.UnavailableError{}
+	}
 	if p.bootstrap {
 		if input.Schema != 1 || input.ID != "" || input.Version != "" || input.Operation != "" || input.Current != nil || input.KernelVersion != 0 || input.UserAuthority != 0 || input.Generation != 0 {
 			return originalInput{}, identity.UnavailableError{}
@@ -217,7 +231,10 @@ func (p *nativePhase) validateUserOriginal(input originalInput) error {
 		}
 		if current := input.Current; current != nil {
 			wire, err := json.Marshal(current)
-			if err != nil || len(wire) > 131072 || current.ID != input.ID || !nativeVersion(current.Version) || current.CreatedAt.IsZero() || current.LastModified.Before(current.CreatedAt) || current.LastModified.After(input.At) || input.KernelVersion == 0 || input.UserAuthority == 0 || input.Generation < 1 {
+			if err != nil || len(wire) > 131072 || current.ID != input.ID || !nativeVersion(current.Version) || current.CreatedAt.IsZero() || current.LastModified.Before(current.CreatedAt) || current.LastModified.After(input.At) || input.Generation < 1 {
+				return identity.UnavailableError{}
+			}
+			if input.KernelVersion == 0 || input.UserAuthority == 0 || p.managedDelete() && !validManagedWithdrawal(input.ManagedWithdrawal) {
 				return identity.UnavailableError{}
 			}
 		}

@@ -85,6 +85,7 @@ type Service struct {
 	authority     *authoritypg.AuthorityStore
 	crypto        *envelope.Service
 	protocol      *scim.UsersService
+	managed       *managedProvisioning
 }
 
 // Format redacts all borrowed runtime and secret custody for every verb.

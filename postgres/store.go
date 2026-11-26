@@ -269,12 +269,12 @@ func (b *protocolBridge) commitDelete(ctx context.Context, p *nativePhase, prepa
 		// including actual kernel eligibility, but never the deleted SCIM
 		// projection, which may have expired already.
 		if !p.group() {
-			user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(p.original.ID)})
+			user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: p.originalUserStatus().User.ID})
 			if err != nil || user.Status != identity.StatusActive {
 				return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, identity.ForbiddenError{}
 			}
 		}
-		if err := b.service.recheckRead(ctx, &p.admission); err != nil {
+		if err := p.recheckDeleteAcknowledgement(ctx); err != nil {
 			return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, err
 		}
 		return scim.WriteResult{Outcome: scim.WriteOutcomeCommitted}, nil

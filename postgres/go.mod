@@ -10,11 +10,13 @@ require (
 	github.com/faustbrian/go-clock v1.2.0
 	github.com/faustbrian/go-identity v0.0.0-20261123113741-94b876278a93
 	github.com/faustbrian/go-identity/postgres v0.0.0-20261126095329-3c5c71d20a70
+	github.com/faustbrian/go-identity/session v0.0.0-20261027053124-3051d2cd42b5
+	github.com/faustbrian/go-identity/session/postgres v0.0.0-20261027044816-80f08eb82bb9
 	github.com/faustbrian/go-migrations/v3 v3.1.1-0.20261015110643-ca105f265cfc
 	github.com/faustbrian/go-organization v0.0.0-20261122135635-30af6abd1547
-	github.com/faustbrian/go-organization/postgres v0.0.0-20261125064514-0db635e0981d
+	github.com/faustbrian/go-organization/postgres v0.0.0-20261126135735-651322f9c111
 	github.com/faustbrian/go-postgres v1.1.1-0.20260912090843-61261695bcc7
-	github.com/faustbrian/go-scim v0.0.0-20261126100726-3ed06a762b19
+	github.com/faustbrian/go-scim v0.0.0-20261126125803-84fbc6e3d654
 	github.com/faustbrian/go-secret-envelope/v2 v2.0.1
 	github.com/faustbrian/go-transactional-outbox/postgres/identity v0.0.0-20261026011803-e03d6969b19b
 	github.com/faustbrian/go-transactional-outbox/v2 v2.1.1-0.20261022172917-6ed5e0861542
@@ -37,8 +39,6 @@ require (
 	github.com/faustbrian/go-identity/phone v0.0.0-20261020215141-387cc56b91f6 // indirect
 	github.com/faustbrian/go-identity/risk v0.0.0-20261028092233-945b17fc88c4 // indirect
 	github.com/faustbrian/go-identity/risk/postgres v0.0.0-20261028092233-945b17fc88c4 // indirect
-	github.com/faustbrian/go-identity/session v0.0.0-20261027053124-3051d2cd42b5 // indirect
-	github.com/faustbrian/go-identity/session/postgres v0.0.0-20261027044816-80f08eb82bb9 // indirect
 	github.com/faustbrian/go-identity/username v0.0.0-20261018153841-d825f044ef94 // indirect
 	github.com/faustbrian/go-migrations/v2 v2.0.0 // indirect
 	github.com/faustbrian/go-password/v2 v2.0.2-0.20261015050515-4eb0fefa60ff // indirect

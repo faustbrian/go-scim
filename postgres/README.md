@@ -34,6 +34,24 @@ SCIM projection; it does not delete the global kernel user. Credential/password
 writes retain the root protocol's explicit unsupported decision. This selected
 Users milestone is not organization provisioning or whole-unit qualification.
 
+## Managed connection provisioning
+
+Apply `ManagedConnectionsMigrationSource` alongside the native SCIM migrations.
+Select `NewManagedConnectionService` with the native session and provisioning
+composition. The administrator that creates a managed connection can receive
+its bearer once; retry, Get and List return only the safe record. Keep the
+bearer with the exact directory provider and use it with
+`ExecuteManagedProvisioning` for User Create, Get, List and conditional Delete.
+
+Managed Delete uses the connection's persisted `RemoveMembership` policy. The
+same transaction tombstones the selected SCIM User resource and retires only
+its current organization membership contribution. The last active directory
+source can remove directory-owned membership and revoke its scoped authority;
+local membership and other sources remain intact. This does not delete or
+suspend the global user. The organization owner's directory membership migration
+must be installed before selecting this profile. Other managed writes and HTTP
+mounting are not included.
+
 `NewGroupBulkService` explicitly selects Group Bulk **admission**. Apply the
 kernel's `CanonicalSCIMBulkRequestMigrationSource` and this module's
 `BulkAdmissionMigrationSource` before calling `Admit`. A bounded input and a

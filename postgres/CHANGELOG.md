@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Create and read managed SCIM connections with current administrator authority.
+  Reveal the issued bearer once for scoped User provisioning. Conditional
+  managed Delete atomically tombstones the User projection and withdraws only
+  the exact organization membership contribution.
+
 - Read ordered SCIM User source states for directory reconciliation, retaining
   exact native revisions and distinguishing unknown mappings from deletions.
 

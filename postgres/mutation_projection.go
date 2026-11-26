@@ -15,7 +15,11 @@ import (
 
 func (p *nativePhase) originalUserStatus() identity.UserStatusRecord {
 	c := p.service.config()
-	return identity.UserStatusRecord{User: identity.User{ID: identity.UserID(p.original.ID), TenantID: c.Scope.TenantID, Status: identity.StatusActive, Version: p.original.KernelVersion}, AuthorityVersion: p.original.UserAuthority}
+	user := identity.UserID(p.original.ID)
+	if input := p.original.ManagedWithdrawal; input != nil {
+		user = input.UserID
+	}
+	return identity.UserStatusRecord{User: identity.User{ID: user, TenantID: c.Scope.TenantID, Status: identity.StatusActive, Version: p.original.KernelVersion}, AuthorityVersion: p.original.UserAuthority}
 }
 
 func (p *nativePhase) recoverOriginalProjection(ctx context.Context, w kernel.RecoveryWork) (kernel.RecoveryStatus, error) {
@@ -73,6 +77,9 @@ func (p *nativePhase) requireOriginalProjection(ctx context.Context, w kernel.Wo
 	query := `SELECT generation,resource,deleted_at FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR UPDATE`
 	if p.group() {
 		query = `SELECT generation,resource,deleted_at FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR UPDATE`
+	} else if withdrawal := p.original.ManagedWithdrawal; withdrawal != nil {
+		query = managedWithdrawalLockSQL
+		args = append(args, string(withdrawal.UserID))
 	}
 	rows, err := w.Query(ctx, query, args...)
 	if err != nil {

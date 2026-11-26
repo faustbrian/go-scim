@@ -34,12 +34,19 @@ type nativePhase struct {
 	resource    scim.Resource
 	effect      [32]byte
 	intent      scim.WriteIntent
+	withdrawal  *managedWithdrawalEffect
 }
 
-func (*nativePhase) Descriptor() kernel.ContributorDescriptor {
+func (p *nativePhase) Descriptor() kernel.ContributorDescriptor {
+	if p.managedDelete() {
+		return kernel.ContributorDescriptor{Owner: "scim/postgres", ContractID: "identity.scim.managed", Version: 1}
+	}
 	return kernel.ContributorDescriptor{Owner: "scim/postgres", ContractID: "identity.scim", Version: 1}
 }
 func (p *nativePhase) FeatureOperations() []identity.FeatureOperation {
+	if p.managedDelete() {
+		return []identity.FeatureOperation{managedDeleteOperation()}
+	}
 	if p.intent.Operation == bulkInvalidChild {
 		return []identity.FeatureOperation{kernel.SCIMBulkInvalidChildOperation()}
 	}
@@ -62,6 +69,9 @@ func mutationOperation(op scim.Operation) identity.FeatureOperation {
 	return operation
 }
 func (p *nativePhase) operation() identity.FeatureOperation {
+	if p.managedDelete() {
+		return managedDeleteOperation()
+	}
 	if p.intent.Operation == bulkInvalidChild {
 		return kernel.SCIMBulkInvalidChildOperation()
 	}
@@ -151,6 +161,9 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 	if p.bootstrap || p.group() || p.intent.Operation == bulkInvalidChild {
 		id = string(c.ActorID)
 	}
+	if withdrawal := p.original.ManagedWithdrawal; withdrawal != nil {
+		id = string(withdrawal.UserID)
+	}
 	record := p.original.ID
 	if p.bootstrap {
 		record = c.Scope.ConnectionID
@@ -173,6 +186,9 @@ func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 		fields = append(fields, identity.FeatureField{Name: "scim.bulk.child", Value: identity.FeatureValue{Kind: identity.FeatureBytes, Bytes: p.bulkChild.row.Fingerprint}})
 	}
 	if nativeMutation(p.intent.Operation) {
+		if withdrawal := p.original.ManagedWithdrawal; withdrawal != nil {
+			fields = append(fields, withdrawal.field())
+		}
 		// The original resource CAS and target-security observation are frozen in
 		// the existing preparation. Bind all of them to this exact kernel command;
 		// the current projection is neither a journal nor a replay authority.
@@ -284,6 +300,15 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 	if err := w.RequireFeatureCommand(ctx, p, command); err != nil {
 		return identity.FeatureReceipt{}, err
 	}
+	p.withdrawal = nil
+	var withdrawal *managedWithdrawalWork
+	if p.original.ManagedWithdrawal != nil {
+		var err error
+		withdrawal, err = p.lockManagedWithdrawal(ctx, w, command)
+		if err != nil {
+			return identity.FeatureReceipt{}, err
+		}
+	}
 	check := p.checkCurrent
 	if p.failedCycleDependency() != nil {
 		check = p.checkCycleAuthority
@@ -345,6 +370,11 @@ func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command i
 		}
 		if err := p.requireOriginalProjection(ctx, w); err != nil {
 			return identity.FeatureReceipt{}, err
+		}
+		if withdrawal != nil {
+			if err := p.applyManagedWithdrawal(ctx, w, command, withdrawal); err != nil {
+				return identity.FeatureReceipt{}, err
+			}
 		}
 		if p.intent.Operation != scim.UserDelete {
 			username, err := scim.UsernameComparisonKey(p.resource.Attributes["userName"].(string))
@@ -434,6 +464,14 @@ func (p *nativePhase) CheckFeatureCommit(ctx context.Context, w kernel.Work, com
 	if command != p.command {
 		return identity.ForbiddenError{}
 	}
+	if p.original.ManagedWithdrawal != nil {
+		if p.withdrawal == nil {
+			return identity.ForbiddenError{}
+		}
+		if err := p.service.organizations.RequireDirectoryMembershipEffect(ctx, w, p, command, p.withdrawal.update, p.withdrawal.effect); err != nil {
+			return err
+		}
+	}
 	if err := p.checkCurrent(ctx, w); err != nil {
 		return err
 	}
@@ -468,7 +506,7 @@ func (p *nativePhase) checkAdmission(ctx context.Context, w kernel.Work, admissi
 	if err := w.RequireActiveDirectoryAuthority(ctx, p, admission.directory); err != nil {
 		return err
 	}
-	if err := p.service.organizations.RequireCredentialAuthority(ctx, w, p, admission.organization); err != nil {
+	if err := p.requireOrganization(ctx, w, admission); err != nil {
 		return err
 	}
 	if err := authoritypg.RequireAuthority(ctx, w, c.authorityScope(), admission.epoch, c.MaximumDuration); err != nil {
@@ -476,6 +514,11 @@ func (p *nativePhase) checkAdmission(ctx context.Context, w kernel.Work, admissi
 	}
 	if !p.bootstrap {
 		if err := p.requireConnection(ctx, w, admission); err != nil {
+			return err
+		}
+	}
+	if p.original.ManagedWithdrawal != nil {
+		if err := p.requireManagedProfile(ctx, w); err != nil {
 			return err
 		}
 	}
