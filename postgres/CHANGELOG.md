@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Retain structural `400 invalidValue` denials for literal User and Group
+  mutations. The declared resource permission is required to settle or
+  disclose the audited result and its Location.
+
 - Retain a malformed Bulk child with no resource target as an audited
   `400 invalidValue`. Apply cutoff or continue without a resource write.
 

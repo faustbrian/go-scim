@@ -16,21 +16,45 @@ type bulkChildExecution struct {
 	ifMatch             scim.Version
 	acknowledgedFailure bool
 	cycle               *groupCreateCycleMember
+	structuralAuthority bulkChildAuthority
 }
 
 const bulkInvalidChild scim.Operation = "identity.scim.bulk-child-invalid"
 
+type bulkChildAuthority struct {
+	operation scim.Operation
+	target    string
+}
+
+func structuralBulkInvalidValue(child scim.BulkOperation) bool {
+	return child.Error != nil && child.Error.StatusCode() == 400 && child.Error.SCIMType() == "invalidValue"
+}
+
 func resourceFreeBulkError(child scim.BulkOperation) bool {
-	return child.Error != nil && child.Error.StatusCode() == 400 && child.Error.SCIMType() == "invalidValue" &&
+	return structuralBulkInvalidValue(child) &&
 		child.Target == (scim.BulkTarget{}) && len(child.Dependencies) == 0
 }
 
+func literalStructuralBulkAuthority(child scim.BulkOperation) bulkChildAuthority {
+	if !structuralBulkInvalidValue(child) || child.Target.ResourceID == "" || child.Target.BulkID != "" || len(child.Dependencies) != 0 {
+		return bulkChildAuthority{}
+	}
+	op, target := selectDeclaredBulkChild(child, nil)
+	if !nativeMutation(op) {
+		return bulkChildAuthority{}
+	}
+	return bulkChildAuthority{operation: op, target: target}
+}
+
 func newStructuralBulkChild(parent originalInput, row bulkChildRow, child scim.BulkOperation) *bulkChildExecution {
-	if !resourceFreeBulkError(child) || row.Resource != "" || row.Cyclic || len(row.Dependencies) != 0 {
+	authority := literalStructuralBulkAuthority(child)
+	if (!resourceFreeBulkError(child) && authority.operation == "") || row.Resource != "" || row.Cyclic || len(row.Dependencies) != 0 {
 		return nil
 	}
 	// Command identity is also the denial record identity, not a resource ID.
-	return newBulkChildExecution(parent, row, bulkInvalidChild, row.Command, "")
+	phase := newBulkChildExecution(parent, row, bulkInvalidChild, row.Command, "")
+	phase.structuralAuthority = authority
+	return phase
 }
 
 // ExecuteChild executes or recovers the original Group mutation at ordinal. The
@@ -311,6 +335,16 @@ func (p *nativePhase) recordBulkProtocolDenial(ctx context.Context, code kernel.
 		}
 		p.denialOnly = code
 	}
+	if code == kernel.FeatureFailureBulkChildInvalid {
+		// The internal journal operation is not a resource permission. A
+		// malformed literal still needs its declared permission at settlement.
+		authority := p.bulkChild.structuralAuthority
+		if authority.operation != "" {
+			if err := p.service.decide(ctx, string(authority.operation), authority.target, bulkChildAuthorizationType(authority.operation)); err != nil {
+				return err
+			}
+		}
+	}
 	if err := p.initialize(ctx, p.intent.CanonicalRequest); err != nil {
 		return err
 	}
@@ -336,8 +370,13 @@ func (p *bulkAdmissionPhase) createTargets() map[string]string {
 func (p *bulkAdmissionPhase) selectChild(ordinal int, targets map[string]string) (scim.Operation, string) {
 	child := p.children[ordinal]
 	if child.Error != nil {
-		return "", ""
+		authority := literalStructuralBulkAuthority(child)
+		return authority.operation, authority.target
 	}
+	return selectDeclaredBulkChild(child, targets)
+}
+
+func selectDeclaredBulkChild(child scim.BulkOperation, targets map[string]string) (scim.Operation, string) {
 	if child.Target.ResourceType == "User" && child.Method == "POST" {
 		return scim.UserCreate, ""
 	}
