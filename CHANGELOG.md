@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit GroupGet/GroupList admission after current bearer and operation
+  authority, before GroupStore reads or projection. Reuse original deadlines,
+  redacted denials, descendant-context reentry and final disclosure fencing;
+  preserve Group query/version semantics, ordinary execution and User selections.
+
 - Add explicit conditional UserReplace admission after current authority and
   existing bounded replacement/strong If-Match preflight, before command,
   mapping or resource effects. Preserve omitted-field replacement semantics,

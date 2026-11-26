@@ -114,6 +114,39 @@ func (s *GroupsService) Execute(ctx context.Context, request Request) (Response,
 	return s.service.execute(ctx, request)
 }
 
+// ExecuteAdmittedRead explicitly selects GroupGet or GroupList with a required
+// synchronous trusted admission gate. Other operations return 501; a nil service
+// or gate returns 503. Current bearer authentication and operation authorization
+// precede its one invocation, and GroupStore reads and projection follow only an
+// allowed, still-current result. Ordinary Execute and sibling services are unchanged.
+//
+// Inputs and admit are borrowed for this call and must not be mutated concurrently.
+// The gate consumes the remaining original authority, request and parent deadlines;
+// it must honor ctx, retain no invocation state or context and start no detached
+// work. Only nil allows. Untyped 403, 503 and bounded 429 with a positive retry
+// delay are redacted denials; other errors become 503. Cancellation, expiry and
+// panic fail closed, including at the final disclosure fence. The gate must not
+// invoke protocol execution. Calls to this entry point, even invalid ones, and
+// calls reaching the shared protocol executor using its context or a descendant
+// deny the entire guarded call even if the gate ignores the nested error. Other
+// wrappers' preflight failures and unrelated contexts are not policed by this fence.
+//
+// Trusted composition binds authenticated client identity privately in the gate;
+// Connection is not actor authority. This method selects no credential verifier,
+// quota owner, Store, HTTP route, search, write, discovery or connection lifecycle.
+func (s *GroupsService) ExecuteAdmittedRead(parent context.Context, request Request, admit func(context.Context) *Error) (Response, error) {
+	if markAdmissionReentry(parent) {
+		return Response{}, failure(503, "")
+	}
+	if s == nil || s.service == nil || admit == nil {
+		return Response{}, failure(503, "")
+	}
+	if request.Operation != GroupGet && request.Operation != GroupList {
+		return Response{}, failure(501, "")
+	}
+	return s.service.executeWithUsersAdmission(parent, request, guardUsersWriteAdmission(admit))
+}
+
 // ParseGroupFilter parses the same bounded grammar as ParseFilter, resolving
 // Group core paths (including qualified URNs), not User core attributes.
 func ParseGroupFilter(expression string, extensions []Schema, limits Limits) (Filter, error) {

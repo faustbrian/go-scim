@@ -30,6 +30,17 @@ func (s *protocolService) execute(parent context.Context, r Request) (Response, 
 	return s.executeWithUsersAdmission(parent, r, nil)
 }
 
+func markAdmissionReentry(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	if gate, ok := ctx.Value(usersWriteAdmissionKey{}).(*usersWriteAdmissionState); ok {
+		gate.reentered.Store(true)
+		return true
+	}
+	return false
+}
+
 func (s *protocolService) executeWithUsersAdmission(parent context.Context, r Request, admit func(context.Context) *Error) (out Response, err error) {
 	defer func() {
 		if recover() != nil {
@@ -56,8 +67,7 @@ func (s *protocolService) executeWithUsersAdmission(parent context.Context, r Re
 	if s == nil || parent == nil {
 		return Response{}, failure(503, "")
 	}
-	if gate, ok := parent.Value(usersWriteAdmissionKey{}).(*usersWriteAdmissionState); ok {
-		gate.reentered.Store(true)
+	if markAdmissionReentry(parent) {
 		return Response{}, failure(503, "")
 	}
 	ctx, cancel := context.WithTimeout(parent, s.config.RequestTimeout)
@@ -123,7 +133,7 @@ func (s *protocolService) executeWithUsersAdmission(parent context.Context, r Re
 	if !s.authorityCurrent(ctx, c) {
 		return Response{}, failure(503, "")
 	}
-	if admit != nil && (r.Operation == UserGet || r.Operation == UserList) {
+	if admit != nil && (r.Operation == s.profile.get || r.Operation == s.profile.list) {
 		if denial := s.admitUsersOperation(ctx, c, admit); denial != nil {
 			return Response{}, denial
 		}

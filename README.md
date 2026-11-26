@@ -126,6 +126,20 @@ This selection does not add a rate engine, validate managed bearer storage,
 implement HTTP routes, or enable search, Groups, discovery or writes. Ordinary
 `Execute` and sibling services retain their existing behavior.
 
+`GroupsService.ExecuteAdmittedRead(ctx, request, gate)` separately selects
+`GroupGet` and `GroupList` only, after current bearer authentication and
+operation authorization and before GroupStore Get/snapshot or projection.
+The same synchronous gate, original deadlines, redacted denial and final
+disclosure rules apply. The gate must not invoke protocol execution. Calls to
+this entry point, even invalid ones, and calls reaching the shared protocol
+executor using its context or a descendant deny the whole guarded call even
+when the gate ignores the nested denial. Other wrappers' preflight failures
+and unrelated contexts are not policed by this fence. Filter, sort, pagination,
+exact snapshot totals and Group projection/version semantics are unchanged.
+This entry point does not select Group search, writes, discovery, a credential
+verifier, a quota owner, storage or HTTP routes. Ordinary Group execution and
+the separate User admission selections are unchanged.
+
 `UsersService.ExecuteAdmittedCreate(ctx, request, gate)` separately selects
 `UserCreate` with a required synchronous trusted gate. Existing bounded JSON,
 schema, target and query validation, actual bearer authentication and operation
