@@ -171,18 +171,30 @@ func (p *nativePhase) ReconcileSCIMBulkDependency(ctx context.Context, w kernel.
 }
 
 func (s *GroupBulkService) retainBulkDependencyDenial(ctx context.Context, parent *nativePhase, child *bulkChildExecution) error {
+	target := child.original.ID
 	if child.original.Operation == bulkInvalidChild {
-		if !child.validStructuralRow() || !child.structuralAuthority.symbolic {
+		if !child.validStructuralRow() {
 			return identity.ForbiddenError{}
 		}
-		// Dependency failure belongs to the exact authorized resource
-		// operation. The internal malformed-child operation owns only 400.
-		authority := child.structuralAuthority
-		child = newBulkChildExecution(parent.original, child.row, authority.operation, authority.target, "")
+		switch {
+		case child.resourceFreeDependency:
+			// An unsupported method has no resource permission or target.
+			// Keep the original denial command and recheck Bulk authority.
+			if err := s.native.decide(ctx, string(scim.Bulk), s.native.config().Scope.ConnectionID, "identity.scim.bulk"); err != nil {
+				return err
+			}
+			target = ""
+		case child.structuralAuthority.symbolic:
+			authority := child.structuralAuthority
+			child = newBulkChildExecution(parent.original, child.row, authority.operation, authority.target, "")
+			target = authority.target
+		default:
+			return identity.ForbiddenError{}
+		}
 	}
 	p := &nativePhase{service: s.native, admission: parent.admission, bulkChild: child, original: child.original,
 		denialOnly: kernel.FeatureFailureSCIMBulkDependency, intent: scim.WriteIntent{Operation: child.original.Operation,
-			Scope: parent.admission.connection.Scope, ResourceID: child.original.ID, IfMatch: child.ifMatch}}
+			Scope: parent.admission.connection.Scope, ResourceID: target, IfMatch: child.ifMatch}}
 	coordinator, registry, err := s.native.coordinator(p)
 	if err != nil {
 		return err

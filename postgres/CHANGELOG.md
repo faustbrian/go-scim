@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Retain unsupported Bulk methods without a resource operation or Location.
+  Preserve symbolic dependencies, cutoff, and replay.
+
 - Retain pre-write Bulk validation errors found after Prepare against the
   original snapshot, including PATCH `noTarget`, `mutability`, and replay.
 

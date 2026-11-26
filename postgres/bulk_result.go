@@ -71,7 +71,10 @@ func (s *GroupBulkService) writeBulkResult(ctx context.Context, prepared prepare
 			// Only an exact resource-free denial is disclosed by Bulk authority
 			// alone. Checkpoints with any resource operation still have their
 			// separate authorization below.
-			if resourceFreeBulkError(p.bulk.children[ordinal]) && result == (scim.BulkChildResult{Status: scim.BulkChildFailed, Code: 400, SCIMType: "invalidValue"}) {
+			child := p.bulk.children[ordinal]
+			if resourceFreeBulkError(child) &&
+				(result == (scim.BulkChildResult{Status: scim.BulkChildFailed, Code: 400, SCIMType: "invalidValue"}) ||
+					child.Target.BulkID != "" && result == (scim.BulkChildResult{Status: scim.BulkChildFailed, Code: 424})) {
 				continue
 			}
 			return nil, identity.UnavailableError{}

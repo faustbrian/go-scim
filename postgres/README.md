@@ -96,6 +96,12 @@ planner-invalid PATCH paths under the declared resource permission. A symbolic
 PATCH still waits for its original predecessor; a confirmed predecessor
 failure takes precedence over the PATCH validation error.
 
+Unsupported child methods require only Bulk permission. They cannot mutate
+the declared resource or include its Location in the result. A supported
+symbolic target declaration still waits for its original predecessor:
+confirmed failure retains `424`, otherwise a ready child retains
+`400 invalidValue` unless cutoff skips it.
+
 Install the expansion from `BulkSnapshotValidationMigrationSource` before
 using this profile with snapshot-dependent validation. A PATCH can retain
 `noTarget` or `mutability` from its original prepared resource, without

@@ -10,15 +10,16 @@ import (
 )
 
 type bulkChildExecution struct {
-	parent                identity.CommandID
-	row                   bulkChildRow
-	original              originalInput
-	ifMatch               scim.Version
-	acknowledgedFailure   bool
-	cycle                 *groupCreateCycleMember
-	structuralAuthority   bulkChildAuthority
-	retainTypedValidation bool
-	plannerDenial         kernel.FeatureFailureCode
+	parent                 identity.CommandID
+	row                    bulkChildRow
+	original               originalInput
+	ifMatch                scim.Version
+	acknowledgedFailure    bool
+	cycle                  *groupCreateCycleMember
+	structuralAuthority    bulkChildAuthority
+	resourceFreeDependency bool
+	retainTypedValidation  bool
+	plannerDenial          kernel.FeatureFailureCode
 }
 
 const bulkInvalidChild scim.Operation = "identity.scim.bulk-child-invalid"
@@ -34,8 +35,24 @@ func structuralBulkInvalidValue(child scim.BulkOperation) bool {
 }
 
 func resourceFreeBulkError(child scim.BulkOperation) bool {
-	return structuralBulkInvalidValue(child) &&
-		child.Target == (scim.BulkTarget{}) && len(child.Dependencies) == 0
+	if !structuralBulkInvalidValue(child) {
+		return false
+	}
+	if child.Target == (scim.BulkTarget{}) {
+		return len(child.Dependencies) == 0
+	}
+	switch child.Method {
+	case "POST", "PUT", "PATCH", "DELETE":
+		return false
+	}
+	target := child.Target
+	if target.ResourceType != "User" && target.ResourceType != "Group" {
+		return false
+	}
+	if target.BulkID != "" {
+		return target.ResourceID == "" && len(child.Dependencies) == 1
+	}
+	return target.ResourceID != "" && len(child.Dependencies) == 0
 }
 
 func structuralBulkAuthority(child scim.BulkOperation, targets map[string]string) bulkChildAuthority {
@@ -59,12 +76,14 @@ func structuralBulkAuthority(child scim.BulkOperation, targets map[string]string
 
 func newStructuralBulkChild(parent originalInput, row bulkChildRow, child scim.BulkOperation, targets map[string]string) *bulkChildExecution {
 	authority := structuralBulkAuthority(child, targets)
-	if !resourceFreeBulkError(child) && authority.operation == "" {
+	resourceFree := resourceFreeBulkError(child)
+	if !resourceFree && authority.operation == "" {
 		return nil
 	}
 	// Command identity is also the denial record identity, not a resource ID.
 	phase := newBulkChildExecution(parent, row, bulkInvalidChild, row.Command, "")
 	phase.structuralAuthority = authority
+	phase.resourceFreeDependency = resourceFree && child.Target.BulkID != ""
 	if !phase.validStructuralRow() {
 		return nil
 	}
@@ -74,6 +93,9 @@ func newStructuralBulkChild(parent originalInput, row bulkChildRow, child scim.B
 func (p *bulkChildExecution) validStructuralRow() bool {
 	if p.original.Operation != bulkInvalidChild || p.row.Resource != "" || p.row.Cyclic {
 		return false
+	}
+	if p.resourceFreeDependency {
+		return len(p.row.Dependencies) == 1 && p.structuralAuthority == (bulkChildAuthority{})
 	}
 	if p.structuralAuthority.symbolic {
 		return len(p.row.Dependencies) == 1 && nativeMutation(p.structuralAuthority.operation) && p.structuralAuthority.target != ""
@@ -316,9 +338,11 @@ func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
 	if _, ok := bulkValidationKind(p.intent.Operation, code); ok {
 		return p.typedValidationMatches(code)
 	}
-	if code == kernel.FeatureFailureBulkChildInvalid {
+	if code == kernel.FeatureFailureBulkChildInvalid ||
+		code == kernel.FeatureFailureSCIMBulkDependency && p.intent.Operation == bulkInvalidChild {
 		child := p.bulkChild
 		return child != nil && child.validStructuralRow() &&
+			(code == kernel.FeatureFailureBulkChildInvalid || child.resourceFreeDependency) &&
 			p.intent.Operation == bulkInvalidChild && p.intent.ResourceID == "" && p.intent.IfMatch == "" &&
 			p.original == child.original && p.original.Operation == bulkInvalidChild && p.original.ID == string(p.original.Command)
 	}
@@ -612,7 +636,7 @@ func (p *bulkChildExecution) failureResult(code int) (scim.BulkChildResult, bool
 		if code == 400 && p.validStructuralRow() {
 			return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code, SCIMType: "invalidValue"}, true
 		}
-		if code == 424 && p.validStructuralRow() && p.structuralAuthority.symbolic {
+		if code == 424 && p.validStructuralRow() && (p.structuralAuthority.symbolic || p.resourceFreeDependency) {
 			return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true
 		}
 		return scim.BulkChildResult{}, false
