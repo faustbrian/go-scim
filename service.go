@@ -27,10 +27,10 @@ func (s *UsersService) Execute(parent context.Context, r Request) (Response, err
 }
 
 func (s *protocolService) execute(parent context.Context, r Request) (Response, error) {
-	return s.executeWithReadAdmission(parent, r, nil)
+	return s.executeWithUsersAdmission(parent, r, nil)
 }
 
-func (s *protocolService) executeWithReadAdmission(parent context.Context, r Request, admit func(context.Context) *Error) (out Response, err error) {
+func (s *protocolService) executeWithUsersAdmission(parent context.Context, r Request, admit func(context.Context) *Error) (out Response, err error) {
 	defer func() {
 		if recover() != nil {
 			out = Response{}
@@ -54,6 +54,10 @@ func (s *protocolService) executeWithReadAdmission(parent context.Context, r Req
 		}
 	}()
 	if s == nil || parent == nil {
+		return Response{}, failure(503, "")
+	}
+	if gate, ok := parent.Value(usersCreateAdmissionKey{}).(*usersCreateAdmissionState); ok {
+		gate.reentered.Store(true)
 		return Response{}, failure(503, "")
 	}
 	ctx, cancel := context.WithTimeout(parent, s.config.RequestTimeout)
@@ -119,8 +123,8 @@ func (s *protocolService) executeWithReadAdmission(parent context.Context, r Req
 	if !s.authorityCurrent(ctx, c) {
 		return Response{}, failure(503, "")
 	}
-	if admit != nil {
-		if denial := s.admitUsersRead(ctx, c, admit); denial != nil {
+	if admit != nil && r.Operation != UserCreate {
+		if denial := s.admitUsersOperation(ctx, c, admit); denial != nil {
 			return Response{}, denial
 		}
 	}
@@ -188,7 +192,7 @@ func (s *protocolService) executeWithReadAdmission(parent context.Context, r Req
 		}
 		out, err = s.resourceResponse(resource, 200, p)
 	case s.profile.create, s.profile.replace, s.profile.patch, s.profile.delete:
-		out, err = s.write(ctx, c, r, doc)
+		out, err = s.write(ctx, c, r, doc, admit)
 	default:
 		return Response{}, failure(501, "")
 	}
@@ -370,7 +374,7 @@ func (s *protocolService) resourceResponse(r Resource, status int, p queryPlan) 
 	return Response{Status: status, ContentType: "application/scim+json", Body: body, ETag: r.Version, Location: s.location(r.ID)}, nil
 }
 
-func (s *protocolService) write(ctx context.Context, c Connection, r Request, doc map[string]any) (out Response, err error) {
+func (s *protocolService) write(ctx context.Context, c Connection, r Request, doc map[string]any, admit func(context.Context) *Error) (out Response, err error) {
 	p, e := s.planQuery(r.Query)
 	if e != nil {
 		return Response{}, e
@@ -428,6 +432,14 @@ func (s *protocolService) write(ctx context.Context, c Connection, r Request, do
 	}{r.Operation, r.ResourceID, r.IfMatch, doc, r.Query})
 	if e != nil {
 		return Response{}, failure(400, "invalidSyntax")
+	}
+	// Create admission follows the existing bounded schema/query preflight, not
+	// a second parser. No server command, Store reservation or mapping precedes
+	// it; the canonical intent below is otherwise unchanged.
+	if admit != nil {
+		if denial := s.admitUsersOperation(ctx, c, admit); denial != nil {
+			return Response{}, denial
+		}
 	}
 	command, e := identity.NewCommandID()
 	if e != nil {

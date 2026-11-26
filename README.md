@@ -126,6 +126,23 @@ This selection does not add a rate engine, validate managed bearer storage,
 implement HTTP routes, or enable search, Groups, discovery or writes. Ordinary
 `Execute` and sibling services retain their existing behavior.
 
+`UsersService.ExecuteAdmittedCreate(ctx, request, gate)` separately selects
+`UserCreate` with a required synchronous trusted gate. Existing bounded JSON,
+schema, target and query validation, actual bearer authentication and operation
+authorization must pass before the gate runs. It runs once per valid authorized
+attempt, including a retry, before mapping, server command allocation or Store
+admission. The existing canonical write, idempotency and durable-owner command
+remain unchanged; allowing admission does not grant write or replay authority.
+
+The Create gate uses the same original deadlines and redacted denial rules as
+admitted reads. Cancellation, exclusive authority expiry, panics and reentrant
+protocol execution through its context fail closed before command effects.
+The gate must not retain its context or start detached work. The final disclosure
+fence still withholds a late result without rewriting a Store's committed outcome.
+This entry point adds no limiter, native storage selection or HTTP route. It does
+not select replacement, PATCH, delete, reads, Groups or Bulk, and ordinary
+`Execute` retains its existing physical behavior.
+
 ```go
 func CreateUser(ctx context.Context, service *scim.UsersService,
     credential authentication.BearerCredential) (scim.Response, error) {

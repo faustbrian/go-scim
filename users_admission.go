@@ -2,6 +2,7 @@ package scim
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,10 +30,49 @@ func (s *UsersService) ExecuteAdmittedRead(parent context.Context, r Request, ad
 	if r.Operation != UserGet && r.Operation != UserList {
 		return Response{}, failure(501, "")
 	}
-	return s.service.executeWithReadAdmission(parent, r, admit)
+	return s.service.executeWithUsersAdmission(parent, r, admit)
 }
 
-func (s *protocolService) admitUsersRead(ctx context.Context, c Connection, admit func(context.Context) *Error) *Error {
+// ExecuteAdmittedCreate explicitly selects UserCreate with a required trusted
+// admission gate. Other operations return 501; a nil service or gate returns
+// 503. Existing bounded request/schema validation, actual bearer authentication
+// and operation authorization precede its one invocation. Mapping, command
+// allocation and Store admission follow only an allowed, still-current result.
+// Canonical input, Store-owned command/replay and write authority are unchanged.
+//
+// Inputs and admit are borrowed synchronously and must not be mutated
+// concurrently. The gate consumes the remaining original authority, request and
+// parent budget; only nil allows, and the denial rules of ExecuteAdmittedRead
+// apply. Cancellation, expiry and panic fail closed before command effects.
+// The final disclosure fence withholds late results without changing a committed
+// Store outcome. The gate must retain no invocation state or context and start
+// no detached work. It must not invoke protocol execution: attempted reentry
+// using its context or a descendant denies the entire call. This context fence
+// cannot police trusted code using unrelated contexts.
+func (s *UsersService) ExecuteAdmittedCreate(parent context.Context, r Request, admit func(context.Context) *Error) (Response, error) {
+	if s == nil || s.service == nil || admit == nil {
+		return Response{}, failure(503, "")
+	}
+	if r.Operation != UserCreate {
+		return Response{}, failure(501, "")
+	}
+	return s.service.executeWithUsersAdmission(parent, r, func(ctx context.Context) *Error {
+		state := &usersCreateAdmissionState{}
+		denial := admit(context.WithValue(ctx, usersCreateAdmissionKey{}, state))
+		if state.reentered.Load() {
+			return failure(503, "")
+		}
+		return denial
+	})
+}
+
+type usersCreateAdmissionKey struct{}
+
+// One gate owns this invocation-local marker. The atomic flag also fails closed
+// if trusted code attempts concurrent descendant calls before the gate returns.
+type usersCreateAdmissionState struct{ reentered atomic.Bool }
+
+func (s *protocolService) admitUsersOperation(ctx context.Context, c Connection, admit func(context.Context) *Error) *Error {
 	gateCtx, cancel, err := s.authorityContext(ctx, c)
 	if err != nil {
 		return failure(503, "")

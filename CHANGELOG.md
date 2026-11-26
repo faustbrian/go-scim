@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit UserCreate admission after existing request validation and current
+  bearer/operation authority, before mapping or command effects. Retain canonical
+  Store writes and replay, original deadlines and disclosure fencing; fail closed
+  on denial, cancellation, expiry, panic and reentrant gate execution without
+  changing ordinary Execute, admitted reads or sibling services.
+
 - Add an explicit UserGet/UserList selection requiring a synchronous trusted
   gate after current bearer authentication and authorization, before resource
   I/O. Preserve original authority deadlines and final disclosure fencing;
