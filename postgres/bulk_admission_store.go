@@ -20,9 +20,11 @@ SELECT $1,i.ordinal,i.command_id,decode(i.bulk_id,'base64'),decode(i.fingerprint
 FROM jsonb_to_recordset(convert_from($2,'UTF8')::jsonb) AS i
 (ordinal smallint,command_id text,bulk_id text,fingerprint text,resource_id text,component_id smallint,component_order smallint,cyclic boolean,dependency_ids text[])`
 
+const bulkParentMatch = `tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND parent_id=$5
+AND intent_digest=$6 AND configuration_digest=$7 AND response_bytes=$8 AND child_count=$9 AND fail_on_errors=$10 AND created_at=$11`
+
 const bulkCommittedSelect = `SELECT EXISTS(SELECT 1 FROM scim.bulk_requests
-WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND parent_id=$5
-AND intent_digest=$6 AND configuration_digest=$7 AND response_bytes=$8 AND child_count=$9 AND fail_on_errors=$10 AND created_at=$11)`
+WHERE ` + bulkParentMatch + `)`
 
 const bulkRecoverySelect = `SELECT intent_digest FROM scim.bulk_requests WHERE parent_id=$1`
 

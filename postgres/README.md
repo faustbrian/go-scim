@@ -64,8 +64,11 @@ positive `failOnErrors` threshold, the failure transaction also skips every
 remaining admitted child and appends one protected audit per skip. A skipped
 child has no operation status, resource identity or version. Unknown outcomes
 do not count as failures; retry the same request and index to recover the
-checkpoint when it is known. These results are not a terminal Bulk response;
-other child kinds, cyclic execution and historical reconciliation remain open.
+checkpoint when it is known. Call `ReadResult` with the exact original request
+to read the complete response once all retained children have settled. The
+read neither admits requests nor attaches retry keys. `scim.ErrBulkIncomplete`
+means no terminal response is available; it returns no partial bytes. Other
+child kinds, cyclic execution and historical reconciliation remain open.
 
 ## Composition
 

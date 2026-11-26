@@ -108,40 +108,14 @@ func (s *GroupBulkService) Admit(ctx context.Context, request BulkAdmissionReque
 }
 
 func (s *GroupBulkService) admitGraph(ctx context.Context, request BulkAdmissionRequest, ordinal *int) (*nativePhase, scim.BulkPlan, error) {
-	c := s.native.config()
-	i := new(invocation)
-	ctx = context.WithValue(ctx, invocationKey{}, i)
-	bridge := protocolBridge{service: s.native, groups: true}
-	if _, err := bridge.Authenticate(ctx, request.Credential); err != nil {
-		return nil, scim.BulkPlan{}, scim.NewError(401, "")
-	}
-	operation := string(scim.Bulk)
-	if err := s.native.decide(ctx, operation, c.Scope.ConnectionID, "identity.scim.bulk"); err != nil {
-		return nil, scim.BulkPlan{}, err
-	}
-	plan, err := scim.ParseBulk(request.Body, nil, s.request, c.Limits)
+	prepared, err := s.prepareBulkGraph(ctx, request, ordinal)
 	if err != nil {
 		return nil, scim.BulkPlan{}, err
 	}
-	response, err := scim.PreflightBulkResponse(plan, c.BaseURL, s.response)
-	if err != nil {
-		return nil, scim.BulkPlan{}, err
-	}
-	children := plan.Operations()
-	if ordinal != nil && (*ordinal < 0 || *ordinal >= len(children)) {
-		return nil, scim.BulkPlan{}, scim.NewError(400, "invalidValue")
-	}
-	for _, child := range children {
-		if child.Target.ResourceType == "User" {
-			return nil, scim.BulkPlan{}, scim.NewError(501, "")
-		}
-	}
+	p, plan := prepared.phase, prepared.plan
 	canonical := plan.CanonicalRequest()
 	defer clear(canonical)
-	p := &nativePhase{service: s.native, admission: *i, bulk: &bulkAdmissionPhase{
-		children: children, components: plan.Components(), cutoff: plan.FailOnErrors(), maximum: response.MaximumBytes(), profile: s.profile,
-	}}
-	if err := p.resolveBulkOriginal(ctx, canonical, request.IdempotencyKey); err != nil {
+	if err := p.loadBulkOriginal(ctx, canonical, request.IdempotencyKey, bulkAdmitCustody); err != nil {
 		return nil, scim.BulkPlan{}, err
 	}
 	receipt, err := p.execute(ctx)
@@ -154,10 +128,51 @@ func (s *GroupBulkService) admitGraph(ctx context.Context, request BulkAdmission
 	if err := p.requireCommittedBulkAdmission(ctx); err != nil {
 		return nil, scim.BulkPlan{}, err
 	}
-	if err := s.native.recheckRead(ctx, i); err != nil {
+	if err := s.native.recheckRead(ctx, &p.admission); err != nil {
 		return nil, scim.BulkPlan{}, err
 	}
 	return p, plan, nil
+}
+
+type preparedBulkGraph struct {
+	phase    *nativePhase
+	plan     scim.BulkPlan
+	response scim.BulkResponsePlan
+}
+
+func (s *GroupBulkService) prepareBulkGraph(ctx context.Context, request BulkAdmissionRequest, ordinal *int) (preparedBulkGraph, error) {
+	c := s.native.config()
+	i := new(invocation)
+	ctx = context.WithValue(ctx, invocationKey{}, i)
+	bridge := protocolBridge{service: s.native, groups: true}
+	if _, err := bridge.Authenticate(ctx, request.Credential); err != nil {
+		return preparedBulkGraph{}, scim.NewError(401, "")
+	}
+	operation := string(scim.Bulk)
+	if err := s.native.decide(ctx, operation, c.Scope.ConnectionID, "identity.scim.bulk"); err != nil {
+		return preparedBulkGraph{}, err
+	}
+	plan, err := scim.ParseBulk(request.Body, nil, s.request, c.Limits)
+	if err != nil {
+		return preparedBulkGraph{}, err
+	}
+	response, err := scim.PreflightBulkResponse(plan, c.BaseURL, s.response)
+	if err != nil {
+		return preparedBulkGraph{}, err
+	}
+	children := plan.Operations()
+	if ordinal != nil && (*ordinal < 0 || *ordinal >= len(children)) {
+		return preparedBulkGraph{}, scim.NewError(400, "invalidValue")
+	}
+	for _, child := range children {
+		if child.Target.ResourceType == "User" {
+			return preparedBulkGraph{}, scim.NewError(501, "")
+		}
+	}
+	p := &nativePhase{service: s.native, admission: *i, bulk: &bulkAdmissionPhase{
+		children: children, components: plan.Components(), cutoff: plan.FailOnErrors(), maximum: response.MaximumBytes(), profile: s.profile,
+	}}
+	return preparedBulkGraph{phase: p, plan: plan, response: response}, nil
 }
 
 func bulkProtocolError(err error) error {
@@ -179,7 +194,14 @@ func bulkProtocolError(err error) error {
 	}
 }
 
-func (p *nativePhase) resolveBulkOriginal(ctx context.Context, canonical []byte, optional *identity.IdempotencyKey) error {
+type bulkCustodyAccess uint8
+
+const (
+	bulkAdmitCustody bulkCustodyAccess = iota
+	bulkReadCustody
+)
+
+func (p *nativePhase) loadBulkOriginal(ctx context.Context, canonical []byte, optional *identity.IdempotencyKey, access bulkCustodyAccess) error {
 	c := p.service.config()
 	op := p.operation().OperationID
 	intent, err := p.service.requestIntent(canonical, op)
@@ -206,10 +228,23 @@ func (p *nativePhase) resolveBulkOriginal(ctx context.Context, canonical []byte,
 	}
 	scope := kernel.RequestKeyScope{TenantID: c.Scope.TenantID, ActorID: c.ActorID, ActorKind: authorization.SubjectServiceAccount, Method: "POST", RouteID: op}
 	caller := p.service.caller(op, op, "identity.request-admission")
-	binding, wire, err := p.coordinator.ResolvePreparedCanonicalRequest(ctx, scope, selector, optional, intent, caller, p.registration(), p)
+	var binding kernel.RequestKeyPreparationBinding
+	var wire []byte
+	switch access {
+	case bulkAdmitCustody:
+		binding, wire, err = p.coordinator.ResolvePreparedCanonicalRequest(ctx, scope, selector, optional, intent, caller, p.registration(), p)
+	case bulkReadCustody:
+		var found bool
+		binding, wire, found, err = p.coordinator.ReadPreparedCanonicalRequest(ctx, scope, selector, optional, intent, caller, p.registration(), p)
+		if err == nil && !found {
+			return scim.ErrBulkIncomplete
+		}
+	default:
+		return identity.UnavailableError{}
+	}
+	defer clear(wire)
 	if err != nil {
 		return err
 	}
-	defer clear(wire)
 	return p.restoreBulkRequest(ctx, binding, wire, fields)
 }

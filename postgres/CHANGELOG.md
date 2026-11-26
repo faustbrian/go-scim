@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Read the terminal response for an admitted Group Bulk request without
+  admitting another request, attaching a retry key, or executing a child.
+  Replay preserves declaration order and omits unprocessed cutoff skips.
+
 - Retain definitive native Group Bulk child denials without applying the Group.
   At the configured error threshold, skip remaining admitted children and
   append one protected audit per skip in the same transaction. Ambiguous
