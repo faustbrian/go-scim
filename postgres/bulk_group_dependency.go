@@ -171,6 +171,15 @@ func (p *nativePhase) ReconcileSCIMBulkDependency(ctx context.Context, w kernel.
 }
 
 func (s *GroupBulkService) retainBulkDependencyDenial(ctx context.Context, parent *nativePhase, child *bulkChildExecution) error {
+	if child.original.Operation == bulkInvalidChild {
+		if !child.validStructuralRow() || !child.structuralAuthority.symbolic {
+			return identity.ForbiddenError{}
+		}
+		// Dependency failure belongs to the exact authorized resource
+		// operation. The internal malformed-child operation owns only 400.
+		authority := child.structuralAuthority
+		child = newBulkChildExecution(parent.original, child.row, authority.operation, authority.target, "")
+	}
 	p := &nativePhase{service: s.native, admission: parent.admission, bulkChild: child, original: child.original,
 		denialOnly: kernel.FeatureFailureSCIMBulkDependency, intent: scim.WriteIntent{Operation: child.original.Operation,
 			Scope: parent.admission.connection.Scope, ResourceID: child.original.ID, IfMatch: child.ifMatch}}

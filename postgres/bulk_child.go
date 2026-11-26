@@ -24,6 +24,7 @@ const bulkInvalidChild scim.Operation = "identity.scim.bulk-child-invalid"
 type bulkChildAuthority struct {
 	operation scim.Operation
 	target    string
+	symbolic  bool
 }
 
 func structuralBulkInvalidValue(child scim.BulkOperation) bool {
@@ -35,26 +36,47 @@ func resourceFreeBulkError(child scim.BulkOperation) bool {
 		child.Target == (scim.BulkTarget{}) && len(child.Dependencies) == 0
 }
 
-func literalStructuralBulkAuthority(child scim.BulkOperation) bulkChildAuthority {
-	if !structuralBulkInvalidValue(child) || child.Target.ResourceID == "" || child.Target.BulkID != "" || len(child.Dependencies) != 0 {
+func structuralBulkAuthority(child scim.BulkOperation, targets map[string]string) bulkChildAuthority {
+	if !structuralBulkInvalidValue(child) {
 		return bulkChildAuthority{}
 	}
-	op, target := selectDeclaredBulkChild(child, nil)
-	if !nativeMutation(op) {
+	symbolic := child.Target.BulkID != ""
+	if symbolic {
+		if child.Target.ResourceID != "" || len(child.Dependencies) != 1 {
+			return bulkChildAuthority{}
+		}
+	} else if child.Target.ResourceID == "" || len(child.Dependencies) != 0 {
 		return bulkChildAuthority{}
 	}
-	return bulkChildAuthority{operation: op, target: target}
+	op, target := selectDeclaredBulkChild(child, targets)
+	if !nativeMutation(op) || target == "" {
+		return bulkChildAuthority{}
+	}
+	return bulkChildAuthority{operation: op, target: target, symbolic: symbolic}
 }
 
-func newStructuralBulkChild(parent originalInput, row bulkChildRow, child scim.BulkOperation) *bulkChildExecution {
-	authority := literalStructuralBulkAuthority(child)
-	if (!resourceFreeBulkError(child) && authority.operation == "") || row.Resource != "" || row.Cyclic || len(row.Dependencies) != 0 {
+func newStructuralBulkChild(parent originalInput, row bulkChildRow, child scim.BulkOperation, targets map[string]string) *bulkChildExecution {
+	authority := structuralBulkAuthority(child, targets)
+	if !resourceFreeBulkError(child) && authority.operation == "" {
 		return nil
 	}
 	// Command identity is also the denial record identity, not a resource ID.
 	phase := newBulkChildExecution(parent, row, bulkInvalidChild, row.Command, "")
 	phase.structuralAuthority = authority
+	if !phase.validStructuralRow() {
+		return nil
+	}
 	return phase
+}
+
+func (p *bulkChildExecution) validStructuralRow() bool {
+	if p.original.Operation != bulkInvalidChild || p.row.Resource != "" || p.row.Cyclic {
+		return false
+	}
+	if p.structuralAuthority.symbolic {
+		return len(p.row.Dependencies) == 1 && nativeMutation(p.structuralAuthority.operation) && p.structuralAuthority.target != ""
+	}
+	return len(p.row.Dependencies) == 0
 }
 
 // ExecuteChild executes or recovers the original Group mutation at ordinal. The
@@ -94,13 +116,14 @@ func (s *GroupBulkService) ExecuteChild(ctx context.Context, request BulkAdmissi
 func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request BulkAdmissionRequest, parent *nativePhase, plan scim.BulkPlan, rows []bulkChildRow, ordinal int) (result scim.BulkChildResult, err error) {
 	child := parent.bulk.children[ordinal]
 	selected := rows[ordinal]
-	operation, target := parent.bulk.selectChild(ordinal, parent.bulk.createTargets())
+	targets := parent.bulk.createTargets()
+	operation, target := parent.bulk.selectChild(ordinal, targets)
 	if operation != "" {
 		if err := s.native.decide(ctx, string(operation), target, bulkChildAuthorizationType(operation)); err != nil {
 			return result, err
 		}
 	}
-	phase := newStructuralBulkChild(parent.original, selected, child)
+	phase := newStructuralBulkChild(parent.original, selected, child, targets)
 	structural := phase != nil
 	if !structural {
 		phase = newBulkChildExecution(parent.original, selected, operation, target, scim.Version(child.Version))
@@ -129,12 +152,6 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 		}
 		return checkpoint, nil
 	}
-	if structural {
-		if !ready {
-			return result, identity.ConflictError{}
-		}
-		return s.retainStructuralBulkDenial(ctx, parent, phase)
-	}
 	if selected.Cyclic {
 		return s.executeGroupCreateCycle(ctx, request, parent, plan, rows, ordinal)
 	}
@@ -149,6 +166,9 @@ func (s *GroupBulkService) executeAdmittedBulkChild(ctx context.Context, request
 		if !ready {
 			return result, identity.ConflictError{}
 		}
+	}
+	if structural {
+		return s.retainStructuralBulkDenial(ctx, parent, phase)
 	}
 	allocated := make(map[int]string)
 	for i, declared := range parent.bulk.children {
@@ -285,7 +305,7 @@ func (p *nativePhase) hasStaleBulkPrecondition() bool {
 func (p *nativePhase) bulkDenialMatches(code kernel.FeatureFailureCode) bool {
 	if code == kernel.FeatureFailureBulkChildInvalid {
 		child := p.bulkChild
-		return child != nil && !child.row.Cyclic && len(child.row.Dependencies) == 0 && child.row.Resource == "" &&
+		return child != nil && child.validStructuralRow() &&
 			p.intent.Operation == bulkInvalidChild && p.intent.ResourceID == "" && p.intent.IfMatch == "" &&
 			p.original == child.original && p.original.Operation == bulkInvalidChild && p.original.ID == string(p.original.Command)
 	}
@@ -370,7 +390,7 @@ func (p *bulkAdmissionPhase) createTargets() map[string]string {
 func (p *bulkAdmissionPhase) selectChild(ordinal int, targets map[string]string) (scim.Operation, string) {
 	child := p.children[ordinal]
 	if child.Error != nil {
-		authority := literalStructuralBulkAuthority(child)
+		authority := structuralBulkAuthority(child, targets)
 		return authority.operation, authority.target
 	}
 	return selectDeclaredBulkChild(child, targets)
@@ -525,8 +545,11 @@ func decodeBulkChildCheckpoint(phase *bulkChildExecution, status string, code *i
 
 func (p *bulkChildExecution) failureResult(code int) (scim.BulkChildResult, bool) {
 	if p.original.Operation == bulkInvalidChild {
-		if code == 400 && p.row.Resource == "" && !p.row.Cyclic && len(p.row.Dependencies) == 0 {
+		if code == 400 && p.validStructuralRow() {
 			return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code, SCIMType: "invalidValue"}, true
+		}
+		if code == 424 && p.validStructuralRow() && p.structuralAuthority.symbolic {
+			return scim.BulkChildResult{Status: scim.BulkChildFailed, Code: code}, true
 		}
 		return scim.BulkChildResult{}, false
 	}

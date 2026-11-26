@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Wait for the admitted target of a symbolic User or Group mutation with
+  structural `invalidValue`. Retain dependency failures or audited cutoff
+  skips before structural denial, and authorize the resolved Location.
+
 - Retain structural `400 invalidValue` denials for literal User and Group
   mutations. The declared resource permission is required to settle or
   disclose the audited result and its Location.

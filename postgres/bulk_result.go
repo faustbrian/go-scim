@@ -147,7 +147,7 @@ func (p *nativePhase) readBulkCheckpoints(ctx context.Context) ([]scim.BulkChild
 			op = ""
 		}
 		child := p.bulk.children[index]
-		phase := newStructuralBulkChild(p.original, original, child)
+		phase := newStructuralBulkChild(p.original, original, child, targets)
 		if phase == nil {
 			phase = newBulkChildExecution(p.original, original, op, target, scim.Version(child.Version))
 		}
