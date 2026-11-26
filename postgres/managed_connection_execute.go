@@ -182,3 +182,40 @@ func (s *ManagedConnectionService) ExecuteManagedAdmittedPatch(ctx context.Conte
 		})
 	})
 }
+
+// ExecuteManagedAdmittedReplace selects only conditional User Replace for the
+// issued bearer and exact tenant. It requires a synchronous gate and rejects
+// caller request keys. Current native authority, the bounded complete writable
+// replacement and required strong If-Match precede the gate. The canonical
+// scoped request then selects one original command with the existing Store;
+// replacement semantics, CAS, atomic effects and replay retain their owners.
+// The gate receives the configured client and must honor its original context
+// without retaining the invocation or starting detached work. Ordinary managed
+// provisioning and other operation selections remain unchanged.
+func (s *ManagedConnectionService) ExecuteManagedAdmittedReplace(ctx context.Context, tenant identity.TenantID, request scim.Request, admit scim.ProtocolAdmission) (scim.Response, error) {
+	if s == nil || ctx == nil || s.writer == nil || admit == nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	if request.Operation != scim.UserReplace {
+		return scim.Response{}, scim.NewError(501, "")
+	}
+	if request.IdempotencyKey != "" {
+		return scim.Response{}, scim.NewError(400, "invalidValue")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.config.MaximumDuration)
+	defer cancel()
+	source, err := s.loadManagedProvisioning(ctx, tenant, request.Credential)
+	if err != nil {
+		var denied identity.ForbiddenError
+		if errors.As(err, &denied) {
+			return scim.Response{}, scim.NewError(401, "")
+		}
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	return source.executeProtocol(ctx, request, func(ctx context.Context, request scim.Request) (scim.Response, error) {
+		return source.protocol.ExecuteAdmittedReplace(ctx, request, func(ctx context.Context) *scim.Error {
+			configured := source.config()
+			return admit(ctx, scim.ProtocolClient{ID: configured.ActorID, TenantID: configured.Scope.TenantID})
+		})
+	})
+}

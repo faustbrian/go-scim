@@ -123,6 +123,17 @@ command. An equivalent retry returns the original resource and ETag without
 another write. Different input with a stale ETag still fails the original CAS.
 The underlying projection, audit, outbox and recovery retain their owners.
 
+`ExecuteManagedAdmittedReplace` separately selects conditional User Replace
+with the issued bearer, exact tenant and configured client, rejecting caller
+request keys. Current authority, required strong `If-Match` and the bounded
+complete replacement precede its once-per-attempt gate. Omitted writable
+fields are replaced, not merged. The existing coordinator retains one original
+command in a private Replace namespace, separate from the unchanged PATCH
+namespace. An equivalent headerless retry returns its original User/ETag after
+the current version changes, without another generation, audit or outbox effect.
+Ordinary managed execution still rejects Replace; configured and Bulk behavior,
+SQL, migrations, original deadlines and root disclosure fences are unchanged.
+
 `NewGroupBulkService` explicitly selects Group Bulk **admission**. Apply the
 kernel's `CanonicalSCIMBulkRequestMigrationSource` and this module's
 `BulkAdmissionMigrationSource` before calling `Admit`. A bounded input and a
@@ -483,9 +494,12 @@ their records remain recoverable. Missing or incompatible historical custody
 fails closed. Immutable original preparation plus the authoritative committed
 receipt reconstructs the original response after later writes or deletion;
 current projection data is not a result-history journal.
-Headerless creates, replacements and PATCH use ordinary server-owned command/metadata
-proposals and no pseudo-client key; a fresh retry is a new command and username
-uniqueness still prevents a duplicate user. DELETE always resolves its scoped
+Configured headerless creates, replacements and PATCH use ordinary server-owned
+command/metadata proposals and no pseudo-client key; a fresh retry is a new
+command and username uniqueness still prevents a duplicate user. The explicit
+managed Patch/Replace selections above instead retain their original canonical
+request through the existing coordinator's separate private namespaces.
+DELETE always resolves its scoped
 operation/target/If-Match selector through the existing kernel canonical owner.
 An optional late retry key aliases that same immutable original command. Changed
 full input conflicts rather than allocating another command for the same selector.

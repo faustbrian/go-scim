@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit admitted conditional User Replace for issued managed bearers.
+  Preserve full omission/replacement semantics, one original command and exact
+  headerless retry in a separate private Replace namespace; retain the published
+  PATCH namespace, ordinary provisioning, configured/Bulk behavior and SQL.
+
 - Add explicit admitted conditional User Patch for issued managed bearers.
   Bind the canonical scoped request to one original command and retain its
   resource and ETag on headerless retry without applying another update.

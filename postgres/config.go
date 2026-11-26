@@ -301,6 +301,8 @@ func (s *Service) requestKeys(p *nativePhase) kernel.RequestKeyConfig {
 		// The selected managed profile has only server-derived keys; never
 		// share that space with caller-selected keys on ordinary provisioning.
 		keys.Namespace += "-managed-patch-v1"
+	} else if p != nil && p.managedUserReplace() {
+		keys.Namespace += "-managed-replace-v1"
 	}
 	return keys
 }
