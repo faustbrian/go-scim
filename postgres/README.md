@@ -77,6 +77,22 @@ honor its context and retain no invocation or detached work. Ordinary managed
 provisioning stays unchanged; this adds neither a quota engine nor HTTP routes,
 search, discovery, Groups or writes to the admitted selection.
 
+`ExecuteManagedAdmittedGroupRead(ctx, tenant, request, maximumMembers, gate)`
+separately selects only Group Get and List for an actual issued managed bearer
+in the exact tenant. `maximumMembers` is trusted deployment composition, not
+request input; select 0..`scim.DefaultGroupMembers`, where zero permits only
+empty Groups. Install the existing `GroupsMigrationSource` before selecting
+this profile. The authorized managed provisioning runtime supplies the unchanged
+native Group store and the configured service-account client and tenant.
+The required synchronous gate runs once after current bearer/operation
+authority and before Group Get/snapshot or projection. Root original deadlines,
+redacted denials/retry metadata, reentry and final disclosure fences apply.
+The gate must honor its context, retain no invocation/context and start no
+detached work. Filter, sort, exact snapshot totals, pagination, projection and
+version semantics retain their existing owners. This does not enable ordinary
+managed Group execution, Group search/writes/discovery, a quota engine, new SQL
+or HTTP routes; User admission and provisioning selections are unchanged.
+
 `ExecuteManagedAdmittedCreate` separately selects only User Create with the
 issued managed bearer, exact tenant and required `scim.ProtocolAdmission` gate.
 Existing root request/schema validation and current native bearer/operation

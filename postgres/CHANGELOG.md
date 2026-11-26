@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit admitted Group Get/List for issued managed bearers and the exact
+  tenant, using the configured native client, existing Group store and trusted
+  member ceiling. Preserve root query/version semantics, original deadlines,
+  redacted denials and disclosure fences; no new SQL, rate owner or HTTP route.
+
 - Add explicit admitted conditional User Replace for issued managed bearers.
   Preserve full omission/replacement semantics, one original command and exact
   headerless retry in a separate private Replace namespace; retain the published
