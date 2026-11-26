@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add explicit admitted conditional User Delete for an issued managed bearer
+  and exact configured native client. Preserve existing If-Match checks,
+  membership-source withdrawal and canonical headerless 204 replay, without
+  changing ordinary provisioning, SQL, migrations or caller-key behavior.
+
 - Add explicit admitted User Create for an issued managed bearer and exact
   configured native client. Validate and authorize before charging the gate,
   then retain original native writes/replay, deadlines and redacted denials.

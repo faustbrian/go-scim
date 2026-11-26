@@ -110,3 +110,40 @@ func (s *ManagedConnectionService) ExecuteManagedAdmittedCreate(ctx context.Cont
 		})
 	})
 }
+
+// ExecuteManagedAdmittedDelete selects only conditional User Delete for an
+// issued managed bearer in the exact tenant. A nonnil synchronous admission
+// gate is required; other operations return 501 and missing composition 503.
+// Current native authority and existing root target/If-Match preflight precede
+// the gate, which receives only the configured service-account client and tenant.
+//
+// The request and gate are borrowed for this call. The root owns once-per-attempt
+// admission, original deadlines, redacted denials and late-result fencing. The
+// gate must honor ctx, retain no invocation/context and start no detached work.
+// Native precondition comparison, RemoveMembership withdrawal, tombstones and
+// canonical headerless receipt replay retain their existing owners and authority.
+// No limiter, SQL, lifecycle, HTTP route or caller-key behavior is introduced.
+func (s *ManagedConnectionService) ExecuteManagedAdmittedDelete(ctx context.Context, tenant identity.TenantID, request scim.Request, admit scim.ProtocolAdmission) (scim.Response, error) {
+	if s == nil || ctx == nil || s.writer == nil || admit == nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	if request.Operation != scim.UserDelete {
+		return scim.Response{}, scim.NewError(501, "")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.config.MaximumDuration)
+	defer cancel()
+	source, err := s.loadManagedProvisioning(ctx, tenant, request.Credential)
+	if err != nil {
+		var denied identity.ForbiddenError
+		if errors.As(err, &denied) {
+			return scim.Response{}, scim.NewError(401, "")
+		}
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	return source.executeProtocol(ctx, request, func(ctx context.Context, request scim.Request) (scim.Response, error) {
+		return source.protocol.ExecuteAdmittedDelete(ctx, request, func(ctx context.Context) *scim.Error {
+			configured := source.config()
+			return admit(ctx, scim.ProtocolClient{ID: configured.ActorID, TenantID: configured.Scope.TenantID})
+		})
+	})
+}

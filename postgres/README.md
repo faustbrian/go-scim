@@ -101,6 +101,20 @@ suspend the global user. The organization owner's directory membership migration
 must be installed before selecting this profile. Other managed writes and HTTP
 mounting are not included.
 
+`ExecuteManagedAdmittedDelete` separately selects only conditional User Delete
+with the issued bearer, exact tenant and a required `scim.ProtocolAdmission`
+gate. Current native credential/operation authority and root target/strong
+`If-Match` checks precede its once-per-attempt gate, before command or receipt
+effects. The gate receives the exact configured native client, not a caller's
+identity. Redacted quota denial retains its bounded positive retry delay and
+performs no protected effect. Allowed deletion still uses the existing atomic
+User tombstone and exact membership-source withdrawal; headerless retry returns
+the original 204 without another write. Original deadlines and disclosure fences
+remain controlling. The borrowed synchronous gate must honor its context and
+retain no invocation/context or detached work. This selection adds no limiter,
+SQL, migration, lifecycle, HTTP route or caller-key semantics, and ordinary
+provisioning and admitted Create/read selections remain unchanged.
+
 `NewGroupBulkService` explicitly selects Group Bulk **admission**. Apply the
 kernel's `CanonicalSCIMBulkRequestMigrationSource` and this module's
 `BulkAdmissionMigrationSource` before calling `Admit`. A bounded input and a
