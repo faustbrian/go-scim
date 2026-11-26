@@ -165,6 +165,18 @@ mapping or resource I/O precedes an allowed, still-current gate result.
 Ordinary execution and other selections are unchanged; no storage, HTTP route
 or public HTTP `Idempotency-Key` extension is enabled by this entry point.
 
+`UsersService.ExecuteAdmittedReplace(ctx, request, gate)` separately selects
+only `UserReplace`. Current bearer/operation authority and the existing bounded
+target, required strong `If-Match`, complete writable replacement and query
+checks precede its once-per-attempt gate. Omitted writable fields retain the
+existing replacement semantics, not PATCH merging. The normalized canonical
+input, Store-owned original command, conditional CAS and replay stay unchanged;
+admission grants none of that authority. Original deadlines, redacted denials,
+descendant-context reentry and late-result fences match the other admitted
+writes. No command, mapping or resource I/O precedes allowed current admission.
+Ordinary execution and all other selectors are unchanged; no storage, HTTP
+route or public HTTP `Idempotency-Key` extension is enabled.
+
 ```go
 func CreateUser(ctx context.Context, service *scim.UsersService,
     credential authentication.BearerCredential) (scim.Response, error) {

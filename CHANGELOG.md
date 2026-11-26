@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit conditional UserReplace admission after current authority and
+  existing bounded replacement/strong If-Match preflight, before command,
+  mapping or resource effects. Preserve omitted-field replacement semantics,
+  canonical Store command/replay, CAS and original authority/disclosure fences;
+  ordinary execution and other operation selections are unchanged.
+
 - Add explicit conditional UserPatch admission after current authority and
   existing bounded request, PatchOp and strong If-Match preflight, before
   command, mapping or resource effects. Preserve the complete patch, canonical
