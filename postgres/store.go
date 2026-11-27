@@ -48,6 +48,10 @@ func (b *protocolBridge) Prepare(ctx context.Context, intent scim.WriteIntent) (
 			return scim.PreparedWrite{}, err
 		}
 	} else if p.managedUserPatch() {
+		p.inactive, err = managedPatchRequestsInactive(intent.CanonicalRequest)
+		if err != nil {
+			return scim.PreparedWrite{}, err
+		}
 		key, err := managedUserPatchKey(intent)
 		if err != nil {
 			return scim.PreparedWrite{}, err
@@ -228,6 +232,12 @@ func (b *protocolBridge) commitUpdate(ctx context.Context, p *nativePhase, prepa
 	if json.Unmarshal(wire, &p.resource) != nil {
 		return scim.WriteResult{}, identity.UnavailableError{}
 	}
+	if p.managedUserPatch() {
+		transition := p.deactivatesProjection()
+		if transition && !p.inactive || p.original.ManagedPatchUser != "" && transition != (p.original.ManagedWithdrawal != nil) {
+			return scim.WriteResult{}, identity.UnavailableError{}
+		}
+	}
 	if !p.group() {
 		if _, err := mappedString(p.resource.Attributes, "userName"); err != nil {
 			return scim.WriteResult{}, err
@@ -306,7 +316,7 @@ func (b *protocolBridge) commitDelete(ctx context.Context, p *nativePhase, prepa
 				return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, identity.ForbiddenError{}
 			}
 		}
-		if err := p.recheckDeleteAcknowledgement(ctx); err != nil {
+		if err := p.recheckMutationAcknowledgement(ctx); err != nil {
 			return scim.WriteResult{Outcome: scim.WriteOutcomeUnknown}, err
 		}
 		return scim.WriteResult{Outcome: scim.WriteOutcomeCommitted}, nil
@@ -370,7 +380,7 @@ func featureFailure(result identity.CommandResult, err error) (error, bool) {
 
 func (b *protocolBridge) recheckFailureDisclosure(ctx context.Context, p *nativePhase) error {
 	if nativeMutation(p.intent.Operation) && !p.group() {
-		user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(p.original.ID)})
+		user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: p.originalUserID()})
 		if err != nil || user.Status != identity.StatusActive {
 			return identity.ForbiddenError{}
 		}
@@ -391,7 +401,7 @@ func (b *protocolBridge) readOriginal(ctx context.Context, p *nativePhase) (scim
 		return scim.Resource{}, identity.UnavailableError{}
 	}
 	if !p.group() {
-		user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: identity.UserID(resource.ID)})
+		user, err := p.service.directory.Get(ctx, identity.GetUserQuery{TenantID: p.service.config().Scope.TenantID, UserID: p.originalUserID()})
 		if err != nil || user.Status != identity.StatusActive {
 			return scim.Resource{}, identity.ForbiddenError{}
 		}
@@ -399,7 +409,7 @@ func (b *protocolBridge) readOriginal(ctx context.Context, p *nativePhase) (scim
 	// A retained committed receipt skips Apply's original-authority fences.
 	// Disclosure therefore requires this invocation's genuine current owners,
 	// not the historical encrypted admission or merely a live local deadline.
-	if err := b.service.recheckRead(ctx, &p.admission); err != nil {
+	if err := p.recheckMutationAcknowledgement(ctx); err != nil {
 		return scim.Resource{}, err
 	}
 	return *resource, nil

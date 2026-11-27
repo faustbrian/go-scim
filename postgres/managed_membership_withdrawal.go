@@ -43,6 +43,10 @@ func (p *nativePhase) managedDelete() bool {
 	return p.service != nil && p.service.managed != nil && !p.bootstrap && p.bulk == nil && p.bulkChild == nil && p.intent.Operation == scim.UserDelete
 }
 
+func (p *nativePhase) managedWithdrawalProfile() bool {
+	return p.managedDelete() || p.inactive
+}
+
 func managedDeleteOperation() identity.FeatureOperation {
 	return identity.FeatureOperation{
 		Owner: "scim", OperationID: string(scim.UserDelete), SchemaID: "identity.scim.user-delete.managed-v1", SchemaVersion: 1,
@@ -75,7 +79,11 @@ func (p *nativePhase) managedUpdate(original originalInput, admission invocation
 	if original.Generation < 1 || original.Generation == math.MaxInt64 {
 		return organizationpg.DirectoryMembershipUpdate{}, identity.InvalidInputError{Field: "scim_projection_generation"}
 	}
-	return organizationpg.NewManagedSCIMMembershipWithdrawal(organizationpg.DirectoryMembershipInput{
+	update := organizationpg.NewManagedSCIMMembershipWithdrawal
+	if p.inactive {
+		update = organizationpg.NewManagedSCIMMembershipDeactivation
+	}
+	return update(organizationpg.DirectoryMembershipInput{
 		Source: p.managedSource(original.ID, input.UserID), ActorID: p.service.config().ActorID, Organization: admission.organization,
 		MemberVersion: input.MemberVersion, MemberAuthorizationVersion: input.MemberAuthority, ExpectedVersion: input.ContributionVersion,
 		Action: organizationpg.DirectoryMembershipWithdraw,
@@ -114,7 +122,7 @@ func (p *nativePhase) prepareManagedWithdrawal(ctx context.Context, original *or
 func (p *nativePhase) lockManagedWithdrawal(ctx context.Context, w kernel.Work, command identity.Command) (*managedWithdrawalWork, error) {
 	input := p.original.ManagedWithdrawal
 	admission, err := p.service.restoreAdmission(p.original.Admission, p.original.At)
-	if !p.managedDelete() || !validManagedWithdrawal(input) || err != nil || !liveConnection(ctx, admission.connection) {
+	if !p.managedWithdrawalProfile() || !validManagedWithdrawal(input) || err != nil || !liveConnection(ctx, admission.connection) {
 		return nil, identity.ForbiddenError{}
 	}
 	// Take the original directory fence before the organization owner's write
@@ -154,11 +162,11 @@ func (p *nativePhase) requireOrganization(ctx context.Context, w kernel.Work, or
 	return p.service.organizations.RequireDirectoryMembershipSourceOwner(ctx, w, p, p.command, source, original.organization, p.withdrawal.effect)
 }
 
-// Call only after the kernel confirmed this exact delete. The original Work
+// Call only after the kernel confirmed this exact mutation. The original Work
 // may advance the organization by retiring the last source. Admit only that
 // exact version on the fresh read, preserving every other original fence and
 // timestamp. Replays without a local effect check their current invocation.
-func (p *nativePhase) recheckDeleteAcknowledgement(ctx context.Context) error {
+func (p *nativePhase) recheckMutationAcknowledgement(ctx context.Context) error {
 	admission := p.admission
 	if p.withdrawal != nil {
 		version, ok := p.withdrawal.effect.ManagedSCIMOrganizationVersion()
@@ -172,7 +180,7 @@ func (p *nativePhase) recheckDeleteAcknowledgement(ctx context.Context) error {
 
 func (p *nativePhase) requireManagedProfile(ctx context.Context, w kernel.Work) error {
 	input := p.original.ManagedWithdrawal
-	if !p.managedDelete() || input.Mappings != p.service.managed.mappings {
+	if !p.managedWithdrawalProfile() || input == nil || input.Mappings != p.service.managed.mappings {
 		return identity.ForbiddenError{}
 	}
 	rows, err := w.Query(ctx, managedWithdrawalProfileSQL, scopeArgs(p.service.config().Scope)...)

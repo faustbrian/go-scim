@@ -34,6 +34,7 @@ type nativePhase struct {
 	resource    scim.Resource
 	effect      [32]byte
 	intent      scim.WriteIntent
+	inactive    bool
 	withdrawal  *managedWithdrawalEffect
 }
 
@@ -157,12 +158,9 @@ func (p *nativePhase) lifecycle() kernel.LifecyclePlan {
 
 func (p *nativePhase) initialize(ctx context.Context, canonical []byte) error {
 	c, op := p.service.config(), p.operation()
-	id := p.original.ID
+	id := string(p.originalUserID())
 	if p.bootstrap || p.group() || p.intent.Operation == bulkInvalidChild {
 		id = string(c.ActorID)
-	}
-	if withdrawal := p.original.ManagedWithdrawal; withdrawal != nil {
-		id = string(withdrawal.UserID)
 	}
 	record := p.original.ID
 	if p.bootstrap {
@@ -299,6 +297,9 @@ func (p *nativePhase) auditAction() string {
 func (p *nativePhase) ApplyFeature(ctx context.Context, w kernel.Work, command identity.Command) (identity.FeatureReceipt, error) {
 	if err := w.RequireFeatureCommand(ctx, p, command); err != nil {
 		return identity.FeatureReceipt{}, err
+	}
+	if p.legacyDeactivation() {
+		return identity.FeatureReceipt{}, identity.UnavailableError{}
 	}
 	p.withdrawal = nil
 	var withdrawal *managedWithdrawalWork

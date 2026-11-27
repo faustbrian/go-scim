@@ -13,13 +13,19 @@ import (
 	scim "github.com/faustbrian/go-scim"
 )
 
+func (p *nativePhase) originalUserID() identity.UserID {
+	if input := p.original.ManagedWithdrawal; input != nil {
+		return input.UserID
+	}
+	if p.original.ManagedPatchUser != "" {
+		return p.original.ManagedPatchUser
+	}
+	return identity.UserID(p.original.ID)
+}
+
 func (p *nativePhase) originalUserStatus() identity.UserStatusRecord {
 	c := p.service.config()
-	user := identity.UserID(p.original.ID)
-	if input := p.original.ManagedWithdrawal; input != nil {
-		user = input.UserID
-	}
-	return identity.UserStatusRecord{User: identity.User{ID: user, TenantID: c.Scope.TenantID, Status: identity.StatusActive, Version: p.original.KernelVersion}, AuthorityVersion: p.original.UserAuthority}
+	return identity.UserStatusRecord{User: identity.User{ID: p.originalUserID(), TenantID: c.Scope.TenantID, Status: identity.StatusActive, Version: p.original.KernelVersion}, AuthorityVersion: p.original.UserAuthority}
 }
 
 func (p *nativePhase) recoverOriginalProjection(ctx context.Context, w kernel.RecoveryWork) (kernel.RecoveryStatus, error) {
@@ -77,9 +83,9 @@ func (p *nativePhase) requireOriginalProjection(ctx context.Context, w kernel.Wo
 	query := `SELECT generation,resource,deleted_at FROM scim.users WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR UPDATE`
 	if p.group() {
 		query = `SELECT generation,resource,deleted_at FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 FOR UPDATE`
-	} else if withdrawal := p.original.ManagedWithdrawal; withdrawal != nil {
+	} else if p.original.ManagedWithdrawal != nil || p.original.ManagedPatchUser != "" {
 		query = managedWithdrawalLockSQL
-		args = append(args, string(withdrawal.UserID))
+		args = append(args, string(p.originalUserID()))
 	}
 	rows, err := w.Query(ctx, query, args...)
 	if err != nil {

@@ -397,7 +397,12 @@ func (s *ManagedConnectionService) ExecuteManagedAdmittedDelete(ctx context.Cont
 // issued bearer and exact tenant. It requires a synchronous gate and rejects
 // caller request keys. After current authority, bounded preflight and the gate,
 // the native Store binds the canonical request to one original command.
-// Atomic patching, CAS and recovery stay with the existing mutation owner.
+// Making an active projection inactive applies the managed connection's
+// RemoveMembership policy in that same command. Only its bound directory
+// source can be withdrawn; global User status and independent grants stay
+// unchanged. An ordinary or reactivating patch does not create a grant.
+// Install the existing Organization directory membership migration before
+// enabling deactivation. Atomic patching, CAS and recovery retain their owner.
 // The gate receives the configured client and must honor its context without
 // retaining the invocation or starting detached work.
 func (s *ManagedConnectionService) ExecuteManagedAdmittedPatch(ctx context.Context, tenant identity.TenantID, request scim.Request, admit scim.ProtocolAdmission) (scim.Response, error) {

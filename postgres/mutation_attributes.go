@@ -35,7 +35,8 @@ func (p *nativePhase) prepareChangedAttributes(ctx context.Context) ([]identity.
 		}
 		updates = append(updates, identity.AttributeUpdate{Name: field.native, Value: identity.AttributeValue{Kind: identity.AttributeString, Scalar: identity.AttributeScalar{Kind: identity.AttributeString, String: current}}})
 	}
-	return c.Fields.Prepare(ctx, identity.AttributePrepareRequest{TenantID: c.Scope.TenantID, UserID: identity.UserID(p.original.ID), SchemaVersion: c.FieldSchema.Version, Updates: updates, Context: p.service.caller(p.operation().OperationID, p.original.ID, "identity.user")})
+	userID := p.originalUserID()
+	return c.Fields.Prepare(ctx, identity.AttributePrepareRequest{TenantID: c.Scope.TenantID, UserID: userID, SchemaVersion: c.FieldSchema.Version, Updates: updates, Context: p.service.caller(p.operation().OperationID, string(userID), "identity.user")})
 }
 
 func mappedString(attributes map[string]any, name string) (string, error) {

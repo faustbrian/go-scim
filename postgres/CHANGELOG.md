@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Apply the persisted RemoveMembership policy when a managed User Patch makes
+  its projection inactive. Retire only the exact current source atomically;
+  retain the ordinary response, original replay and independent grants.
+
 - Add explicit admitted conditional Group Delete for issued managed bearers and
   the exact tenant. Retain the existing canonical headerless and optional-alias
   empty 204 replay, atomic tombstone, audit and outbox without changing member

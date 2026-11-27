@@ -215,6 +215,13 @@ command. An equivalent retry returns the original resource and ETag without
 another write. Different input with a stale ETag still fails the original CAS.
 The underlying projection, audit, outbox and recovery retain their owners.
 
+A managed PATCH that makes the live projection inactive applies the persisted
+`RemoveMembership` policy in the same transaction. Install the Organization
+directory membership migration used by managed User DELETE before enabling
+this path. Only the exact current directory contribution can be retired; the
+global user and independent local or other-source access are unchanged.
+Setting `active: true` or patching unrelated fields does not grant membership.
+
 `ExecuteManagedAdmittedReplace` separately selects conditional User Replace
 with the issued bearer, exact tenant and configured client, rejecting caller
 request keys. Current authority, required strong `If-Match` and the bounded

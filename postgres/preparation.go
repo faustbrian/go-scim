@@ -36,6 +36,7 @@ type originalInput struct {
 	UserAuthority     uint64                  `json:",omitempty"`
 	Generation        int64                   `json:",omitempty"`
 	ManagedWithdrawal *managedWithdrawalInput `json:",omitempty"`
+	ManagedPatchUser  identity.UserID         `json:",omitempty"`
 }
 
 // Preserve the existing 4 KiB scalar provenance allowance while adding at most
@@ -130,7 +131,7 @@ func (p *nativePhase) newOriginalInput(ctx context.Context, command identity.Com
 				query = `SELECT generation FROM scim.groups WHERE tenant_id=$1 AND organization_id=$2 AND provider_id=$3 AND connection_id=$4 AND resource_id=$5 AND resource=$6 AND deleted_at IS NULL`
 			}
 			user := identity.UserID(input.ID)
-			if p.managedDelete() {
+			if p.managedWithdrawalProfile() {
 				err = p.service.pool.Raw().QueryRow(ctx, managedWithdrawalPrepareSQL, args...).Scan(&input.Generation, &user)
 			} else {
 				err = p.service.pool.Raw().QueryRow(ctx, query, args...).Scan(&input.Generation)
@@ -150,7 +151,10 @@ func (p *nativePhase) newOriginalInput(ctx context.Context, command identity.Com
 				}
 				input.KernelVersion, input.UserAuthority = status.User.Version, status.AuthorityVersion
 			}
-			if p.managedDelete() {
+			if p.inactive {
+				input.ManagedPatchUser = user
+			}
+			if p.managedDelete() || p.inactive && current.Version == p.intent.IfMatch && !inactiveProjection(&current) {
 				if err := p.prepareManagedWithdrawal(ctx, &input, user); err != nil {
 					return originalInput{}, err
 				}
@@ -199,7 +203,7 @@ func (p *nativePhase) restoreOriginal(ctx context.Context, b kernel.RequestKeyPr
 	if _, err := p.service.restoreAdmission(input.Admission, input.At); err != nil {
 		return originalInput{}, identity.UnavailableError{}
 	}
-	if (input.ManagedWithdrawal != nil) != (p.managedDelete() && input.Current != nil) {
+	if !p.validOriginalWithdrawal(input) {
 		return originalInput{}, identity.UnavailableError{}
 	}
 	if p.bootstrap {
@@ -218,6 +222,21 @@ func (p *nativePhase) restoreOriginal(ctx context.Context, b kernel.RequestKeyPr
 		return originalInput{}, err
 	}
 	return input, nil
+}
+
+func (p *nativePhase) validOriginalWithdrawal(input originalInput) bool {
+	if input.ManagedPatchUser == "" {
+		// Legacy PATCH preparations carry neither field. Their existing
+		// committed receipts remain readable; Apply cannot newly deactivate.
+		return (input.ManagedWithdrawal != nil) == (p.managedDelete() && input.Current != nil) &&
+			(input.ManagedWithdrawal == nil || validManagedWithdrawal(input.ManagedWithdrawal))
+	}
+	if _, err := identity.ParseSubjectID(string(input.ManagedPatchUser)); err != nil || !p.inactive || input.Current == nil {
+		return false
+	}
+	want := input.Current.Version == p.intent.IfMatch && !inactiveProjection(input.Current)
+	return (input.ManagedWithdrawal != nil) == want && (!want ||
+		validManagedWithdrawal(input.ManagedWithdrawal) && input.ManagedWithdrawal.UserID == input.ManagedPatchUser)
 }
 
 func (p *nativePhase) validateUserOriginal(input originalInput) error {
