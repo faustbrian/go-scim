@@ -185,6 +185,25 @@ state and start no detached work. This selects no other operation, credential
 verifier, quota owner, storage, HTTP route or public HTTP `Idempotency-Key`
 extension. Ordinary execution and sibling selections are unchanged.
 
+`GroupsService.ExecuteAdmittedDelete(ctx, request, gate)` separately selects
+only `GroupDelete`. Current bearer/operation authority and the existing bounded
+target, required strong `If-Match`, empty-body and query checks precede its
+once-per-attempt gate, including retries. No command allocation or GroupStore
+admission precedes an allowed, still-current result. State-dependent target and
+precondition checks, atomic conditional deletion and original replay remain with
+the existing protocol/Store path; admission grants none of that authority.
+The canonical connection, target and original precondition retain headerless
+recovery, with the existing optional `Request.IdempotencyKey` as an additional
+lookup. Successful deletion and replay remain empty 204 responses, and unknown
+outcomes never grant a new effect. Deletion touches only the owned Group
+projection, not member Users, nested Groups or organization membership.
+Original deadlines, redacted denials, descendant-context reentry and late-result
+disclosure fences match admitted Group Patch, including invalid calls to this
+entry point from the gate. The gate must honor its context, retain no invocation
+state and start no detached work. This adds no credential verifier, quota owner,
+storage, HTTP route or other operation; ordinary and sibling selections are
+unchanged.
+
 `UsersService.ExecuteAdmittedCreate(ctx, request, gate)` separately selects
 `UserCreate` with a required synchronous trusted gate. Existing bounded JSON,
 schema, target and query validation, actual bearer authentication and operation

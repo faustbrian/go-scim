@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit conditional GroupDelete admission after current bearer/operation
+  authority and bounded target, strong If-Match, empty-body and query preflight,
+  before command or Store effects. Preserve original canonical headerless and
+  optional-key recovery, empty 204 replay, atomic conditional deletion, member
+  isolation, unknown outcomes and original authority/disclosure fences;
+  ordinary execution and sibling selections are unchanged.
+
 - Add explicit conditional GroupPatch admission after current bearer/operation
   authority and existing bounded target, strong If-Match and Group PatchOp/schema
   preflight, before command, mapping or Store effects. Preserve the complete
