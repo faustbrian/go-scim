@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit admitted conditional Group Delete for issued managed bearers and
+  the exact tenant. Retain the existing canonical headerless and optional-alias
+  empty 204 replay, atomic tombstone, audit and outbox without changing member
+  resources or organization membership. No SQL, migrations, replay owner or
+  other operation selection is added.
+
 - Add explicit admitted conditional Group Patch for issued managed bearers and
   the exact tenant. Preserve ordered typed member updates, native CAS, exact
   no-op metadata and denial audits; retain original headerless replay in a

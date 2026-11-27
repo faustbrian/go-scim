@@ -149,6 +149,26 @@ denial audits keep their existing owners. No SQL, migration, replay owner or
 HTTP route is added; User/Bulk, Group Replace and ordinary Group request-key
 behavior remain unchanged.
 
+`ExecuteManagedAdmittedGroupDelete(ctx, tenant, request, maximumMembers, gate)`
+separately selects only conditional Group Delete for the issued managed bearer
+and exact tenant. The same trusted member ceiling and existing native Groups
+migration/store apply. Current bearer/operation authority and bounded target,
+required strong `If-Match`, empty-body and query validation precede the required
+gate's one invocation, before command preparation or protected effects. The
+gate receives only the configured native client and tenant, must honor its
+original context, and must retain no invocation/context or start detached work.
+Root deadlines, redacted denials/retry metadata, reentry and final disclosure
+fences remain controlling.
+The existing canonical deletion owner retains one original command for the
+exact scope, target and precondition. Headerless retry and an optional
+`IdempotencyKey` alias return the same empty 204 under current authority and
+admission, without another tombstone, command, audit or outbox effect. An alias
+cannot retarget the original deletion. Atomic CAS deletes only the selected
+Group projection; User members, nested Groups and organization membership
+remain unchanged. No SQL, migration, selection marker, replay owner or HTTP
+route is added; User/Bulk and ordinary/other admitted Group behavior remain
+unchanged.
+
 `ExecuteManagedAdmittedCreate` separately selects only User Create with the
 issued managed bearer, exact tenant and required `scim.ProtocolAdmission` gate.
 Existing root request/schema validation and current native bearer/operation

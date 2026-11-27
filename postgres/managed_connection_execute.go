@@ -268,6 +268,55 @@ func (s *ManagedConnectionService) ExecuteManagedAdmittedGroupPatch(ctx context.
 	})
 }
 
+// ExecuteManagedAdmittedGroupDelete selects only conditional Group Delete for an
+// issued managed bearer in the exact tenant. maximumMembers is trusted
+// deployment configuration with NewGroupsService's 0..scim.DefaultGroupMembers
+// semantics; zero permits only empty Groups. A synchronous gate is required.
+// Invalid composition returns 503 and other operations return 501.
+//
+// Current native bearer/operation authority and bounded target, required strong
+// If-Match, empty-body and query validation precede the gate's one invocation,
+// before command preparation or protected effects. The gate receives only the
+// configured service-account client and tenant, must honor ctx, and must retain
+// no invocation/context or start detached work. Root original deadlines,
+// redacted denials/retry metadata, reentry and disclosure fences remain in force.
+//
+// Existing canonical headerless deletion and optional request-key alias custody
+// retain one original command and empty 204 replay under current authority and
+// admission. Atomic CAS, tombstone, audit and outbox retain their owners. Only
+// the selected Group projection is deleted; User/nested Group resources and
+// organization membership remain unchanged. No SQL, migration, replay owner,
+// HTTP route or other managed/ordinary Group selection is added.
+func (s *ManagedConnectionService) ExecuteManagedAdmittedGroupDelete(ctx context.Context, tenant identity.TenantID, request scim.Request, maximumMembers int, admit scim.ProtocolAdmission) (scim.Response, error) {
+	if s == nil || ctx == nil || s.writer == nil || admit == nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	if request.Operation != scim.GroupDelete {
+		return scim.Response{}, scim.NewError(501, "")
+	}
+	ctx, cancel := context.WithTimeout(ctx, s.config.MaximumDuration)
+	defer cancel()
+
+	source, err := s.loadManagedProvisioning(ctx, tenant, request.Credential)
+	if err != nil {
+		var denied identity.ForbiddenError
+		if errors.As(err, &denied) {
+			return scim.Response{}, scim.NewError(401, "")
+		}
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	groups, err := NewGroupsService(source, maximumMembers)
+	if err != nil {
+		return scim.Response{}, scim.NewError(503, "")
+	}
+	return source.executeProtocol(ctx, request, func(ctx context.Context, request scim.Request) (scim.Response, error) {
+		return groups.protocol.ExecuteAdmittedDelete(ctx, request, func(ctx context.Context) *scim.Error {
+			configured := source.config()
+			return admit(ctx, scim.ProtocolClient{ID: configured.ActorID, TenantID: configured.Scope.TenantID})
+		})
+	})
+}
+
 // ExecuteManagedAdmittedCreate selects only User Create for an issued managed
 // bearer in the exact tenant. A nonnil synchronous admission gate is required;
 // other operations return 501 and missing composition returns 503. Ordinary
